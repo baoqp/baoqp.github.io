@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+
+  
+  <title>Parser combinator初探1-简易JSON解析器 | Baoqp&#39;s Blog</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="在学习编译原理的前端的相关知识时，我们通常会接触到LR, LALR(1)等语法解析算法，这些算法都比较晦涩，而且实现起来比较困难。而解析器组合子（parser combinator）则相对易懂和易实现很多。wiki百科中的定义如下，通俗的解释就是解析器组合子是一种高阶函数，其接收若干个处理输入数据的解析函数并返回一个新的解析函数。  A parser combinator is a higher-">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Parser combinator初探1-简易JSON解析器">
+<meta property="og:url" content="http://example.com/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/index.html">
+<meta property="og:site_name" content="Baoqp&#39;s Blog">
+<meta property="og:description" content="在学习编译原理的前端的相关知识时，我们通常会接触到LR, LALR(1)等语法解析算法，这些算法都比较晦涩，而且实现起来比较困难。而解析器组合子（parser combinator）则相对易懂和易实现很多。wiki百科中的定义如下，通俗的解释就是解析器组合子是一种高阶函数，其接收若干个处理输入数据的解析函数并返回一个新的解析函数。  A parser combinator is a higher-">
+<meta property="og:locale">
+<meta property="article:published_time" content="2020-03-07T10:31:45.000Z">
+<meta property="article:modified_time" content="2022-02-13T14:00:15.611Z">
+<meta property="article:author" content="Bao Qingping">
+<meta property="article:tag" content="Parser combinator">
+<meta name="twitter:card" content="summary">
+  
+    <link rel="alternate" href="/atom.xml" title="Baoqp&#39;s Blog" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.1"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">Baoqp&#39;s Blog</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://example.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main"><article id="post-Parser-combinator初探1-简易JSON解析器" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/" class="article-date">
+  <time datetime="2020-03-07T10:31:45.000Z" itemprop="datePublished">2020-03-07</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="article-title" itemprop="name">
+      Parser combinator初探1-简易JSON解析器
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <p>在学习编译原理的前端的相关知识时，我们通常会接触到LR, LALR(1)等语法解析算法，这些算法都比较晦涩，而且实现起来比较困难。而解析器组合子（parser combinator）则相对易懂和易实现很多。wiki百科中的定义如下，通俗的解释就是解析器组合子是一种高阶函数，其接收若干个处理输入数据的解析函数并返回一个新的解析函数。</p>
+<blockquote>
+<p>A <strong>parser combinator</strong> is a higher-order function that accepts several parsers as input and returns a new parser as its output.</p>
+</blockquote>
+<p>解析器组合子适用于处理非左递归的文法，本质是递归下降的一种实现方式。参考 <a target="_blank" rel="noopener" href="https://medium.com/@armin.heller/using-parser-combinators-in-go-e63b3ad69c94">Using Parser Combinators in Go</a> 这篇文章中的go的实现方式，我们用java重新实现一遍，并在此基础上构建一个简单的JSON解析器。</p>
+<h2 id="Parser-combinator代码实现123"><a href="#Parser-combinator代码实现123" class="headerlink" title="Parser combinator代码实现123"></a>Parser combinator代码实现123</h2><p>首先定义Parser的输入如下：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">interface</span> <span class="title class_">Input</span> &#123;</span><br><span class="line">       <span class="comment">// 获取当前的字符</span></span><br><span class="line">       <span class="type">char</span> <span class="title function_">currentCodePoint</span><span class="params">()</span>;</span><br><span class="line">       <span class="comment">// 剩余的输入</span></span><br><span class="line">       Input <span class="title function_">remainingInput</span><span class="params">()</span>;</span><br><span class="line">       <span class="comment">// 剩余输入大小</span></span><br><span class="line">       <span class="type">int</span> <span class="title function_">remainSize</span><span class="params">()</span>;</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+
+<p>Parser函数对输入作用后的输出结果表示如下，其中remainingInput表示此次作用后剩下未处理的输入，用于后续的继续处理。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">Result</span> &#123;</span><br><span class="line">       <span class="comment">// result=null表示解析失败</span></span><br><span class="line">       Object result;</span><br><span class="line">       <span class="comment">// 返回剩余的输入</span></span><br><span class="line">       Input remainingInput;</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+
+<p>Parser函数接口本身的定义为：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="keyword">interface</span> <span class="title class_">Parser</span> &#123;</span><br><span class="line">	Result <span class="title function_">apply</span><span class="params">(Input input)</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+
+
+<p>Parser的具体实现就是对某种模式的匹配，当我们把各种parser按照语法定义组合之后就可以得到该语法的解析器了。最常用的几种组合方法有：</p>
+<ul>
+<li><p>重复：重复当前parser，直到不匹配。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">default</span> Parser <span class="title function_">repeated</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="keyword">final</span> <span class="type">Parser</span> <span class="variable">curParser</span> <span class="operator">=</span> <span class="built_in">this</span>;</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">        <span class="meta">@Override</span></span><br><span class="line">        <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">            <span class="type">List</span> <span class="variable">list</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">ArrayList</span>();</span><br><span class="line">            <span class="type">Result</span> <span class="variable">result</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">Result</span>(list, input);</span><br><span class="line">            <span class="keyword">while</span> (result.result != <span class="literal">null</span>) &#123;</span><br><span class="line">                <span class="type">Result</span> <span class="variable">oneMoreResult</span> <span class="operator">=</span> curParser.apply(result.remainingInput);</span><br><span class="line">                <span class="keyword">if</span> (oneMoreResult.result == <span class="literal">null</span>) &#123;</span><br><span class="line">                    <span class="keyword">return</span> result;</span><br><span class="line">                &#125;</span><br><span class="line">                list.add(oneMoreResult.result);</span><br><span class="line">                result.remainingInput = oneMoreResult.remainingInput;</span><br><span class="line">            &#125;</span><br><span class="line">            <span class="keyword">return</span> result;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li><p>或：使用当前parser或备选parser进行匹配，需要注意的是我们采用贪婪匹配的模式，即当两个parser都能匹配时优先选择匹配内容更长的那个。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line"> default Parser orElse(Parser alternativeParser) &#123;</span><br><span class="line">    final Parser curParser = this;</span><br><span class="line">    return new Parser() &#123;</span><br><span class="line">        @Override</span><br><span class="line">        public Result apply(Input input) &#123;</span><br><span class="line">            Result result = curParser.apply(input);</span><br><span class="line">            Result alternativeResult = alternativeParser.apply(input);</span><br><span class="line">  </span><br><span class="line">            if(result.result == null) &#123;</span><br><span class="line">                return alternativeResult;</span><br><span class="line">            &#125;</span><br><span class="line">  </span><br><span class="line">            if(alternativeResult.result == null) &#123;</span><br><span class="line">                return result;</span><br><span class="line">            &#125;</span><br><span class="line">  </span><br><span class="line">            // 贪婪匹配</span><br><span class="line">            if(result.remainingInput.remainSize() &gt; alternativeResult.remainingInput.remainSize()) &#123;</span><br><span class="line">                return alternativeResult;</span><br><span class="line">            &#125;</span><br><span class="line">  </span><br><span class="line">            return result;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li><p>顺序：当前parser匹配完接着使用第二个parser匹配。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">default</span> Parser <span class="title function_">andThen</span><span class="params">(Parser secondParser)</span> &#123;</span><br><span class="line">       <span class="keyword">final</span> <span class="type">Parser</span> <span class="variable">firstParser</span> <span class="operator">=</span> <span class="built_in">this</span>;</span><br><span class="line">       <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">           <span class="meta">@Override</span></span><br><span class="line">           <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">               <span class="type">Result</span> <span class="variable">firstResult</span> <span class="operator">=</span> firstParser.apply(input);</span><br><span class="line">               <span class="keyword">if</span> (firstResult.result == <span class="literal">null</span>) &#123;</span><br><span class="line">                   <span class="keyword">return</span> firstResult;</span><br><span class="line">               &#125;</span><br><span class="line">               <span class="type">Result</span> <span class="variable">secondResult</span> <span class="operator">=</span> secondParser.apply(firstResult.remainingInput);</span><br><span class="line">               <span class="keyword">if</span> (secondResult.result != <span class="literal">null</span>) &#123;</span><br><span class="line">                   <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Result</span>(<span class="keyword">new</span> <span class="title class_">ParserHelper</span>.Pair(firstResult.result, secondResult.result), secondResult.remainingInput);</span><br><span class="line">               &#125;</span><br><span class="line">  </span><br><span class="line">               <span class="keyword">return</span> secondResult;</span><br><span class="line">           &#125;</span><br><span class="line">       &#125;;</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure></li>
+<li><p>可选：当前parser可匹配则匹配，不可匹配就忽略。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"> <span class="keyword">default</span> Parser <span class="title function_">optional</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="keyword">final</span> <span class="type">Parser</span> <span class="variable">curParser</span> <span class="operator">=</span> <span class="built_in">this</span>;</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">        <span class="meta">@Override</span></span><br><span class="line">        <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">            <span class="type">Result</span> <span class="variable">result</span> <span class="operator">=</span> curParser.apply(input);</span><br><span class="line">            <span class="keyword">if</span> (result.result != <span class="literal">null</span>) &#123;</span><br><span class="line">                <span class="keyword">return</span> result;</span><br><span class="line">            &#125;</span><br><span class="line">            result.result = <span class="keyword">new</span> <span class="title class_">Nothing</span>();</span><br><span class="line">            result.remainingInput = input;</span><br><span class="line">            <span class="keyword">return</span> result;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+</ul>
+<p>除此之外，还有</p>
+<ul>
+<li>onceOrMore：当前parser匹配一次或多次</li>
+<li>repeatAndFoldLeft：重复作用当前parser，并对产生的结果用累加函数进行处理</li>
+<li>bind：当前parser作用一次，并使用结果构建一个新的parser</li>
+<li>convert：对当前parser的作用结果进行转换</li>
+</ul>
+<h2 id="构建简易JSON解析器"><a href="#构建简易JSON解析器" class="headerlink" title="构建简易JSON解析器"></a>构建简易JSON解析器</h2><p>我们的简易JSON语法定义如下：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">json := obj | arr</span><br><span class="line"></span><br><span class="line">obj := &#x27;&#123;&#x27; pair (&#x27;,&#x27; pair)* &#x27;&#125;&#x27;</span><br><span class="line">		| &#x27;&#123;&#x27; &#x27;&#125;&#x27;</span><br><span class="line">		</span><br><span class="line">pair := STRING &#x27;:&#x27; value</span><br><span class="line"></span><br><span class="line">arr := &#x27;[&#x27; value (&#x27;,&#x27; value)* &#x27;]&#x27; </span><br><span class="line">		| &#x27;[&#x27; &#x27;]&#x27;</span><br><span class="line">		</span><br><span class="line">value := STRING</span><br><span class="line">  		 | INTEGER</span><br><span class="line">  		 | obj</span><br><span class="line">  		 | arr</span><br><span class="line">  		 | &#x27;true&#x27;</span><br><span class="line">  		 | &#x27;false&#x27;</span><br><span class="line">  		 | &#x27;null&#x27;</span><br></pre></td></tr></table></figure>
+
+
+
+<p>根据语法定义，我们可以定义如下的parser，其中对于JsonObject用Map表示，对于JsonArray用List表示。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="type">Parser</span> <span class="variable">pair</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">     <span class="meta">@Override</span></span><br><span class="line">     <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">         <span class="keyword">return</span> ParserHelper.expectString.andThen(expect(<span class="string">&quot;:&quot;</span>)).first() <span class="comment">// key</span></span><br><span class="line">                 .andThen(value)  <span class="comment">// value</span></span><br><span class="line">                 .convert(JSON::parsePair).apply(input);</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">static</span> <span class="type">Parser</span> <span class="variable">jsonObject</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">     <span class="meta">@Override</span></span><br><span class="line">     <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">         <span class="keyword">return</span> expect(<span class="string">&quot;&#123;&quot;</span>).andThen(pair.optional()).second().convert(JSON::buildMapWithPair)</span><br><span class="line">                 .bind(firstResult -&gt; expect(<span class="string">&quot;,&quot;</span>).andThen(pair).second()</span><br><span class="line">                         .repeatAndFoldLeft(firstResult, JSON::addKVPairToMap)).apply(input);</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">static</span> <span class="type">Parser</span> <span class="variable">jsonArray</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">     <span class="meta">@Override</span></span><br><span class="line">     <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">         <span class="keyword">return</span> expect(<span class="string">&quot;[&quot;</span>).andThen(value.optional()).second().convert(JSON::buildListWithValue)</span><br><span class="line">                 .bind(firstResult -&gt; expect(<span class="string">&quot;,&quot;</span>).andThen(value).second()</span><br><span class="line">                         .repeatAndFoldLeft(firstResult, JSON::addValueToList)).apply(input);</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">static</span> <span class="type">Parser</span> <span class="variable">value</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">     <span class="meta">@Override</span></span><br><span class="line">     <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">         <span class="keyword">return</span> ParserHelper.expectInteger.convert(JSON::toInt)</span><br><span class="line">                 .orElse(expect(<span class="string">&quot;true&quot;</span>).convert(JSON::toBool))</span><br><span class="line">                 .orElse(expect(<span class="string">&quot;false&quot;</span>).convert(JSON::toBool))</span><br><span class="line">                 .orElse(expect(<span class="string">&quot;null&quot;</span>).convert(JSON::toNull))</span><br><span class="line">                 .orElse(ParserHelper.expectString)</span><br><span class="line">                 .orElse(jsonObject)</span><br><span class="line">                 .orElse(jsonArray)</span><br><span class="line">                 .apply(input);</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">static</span> <span class="type">Parser</span> <span class="variable">json</span> <span class="operator">=</span> jsonObject.orElse(jsonArray);</span><br></pre></td></tr></table></figure>
+
+
+
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/" data-id="ckzldzral000itofw105v0qhr" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Parser-combinator/" rel="tag">Parser combinator</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+  
+    <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Older</strong>
+      <div class="article-nav-title">Cassandra笔记1-Compaction策略</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tags</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/BookKeeper/" rel="tag">BookKeeper</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Parser-combinator/" rel="tag">Parser combinator</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Pulasr/" rel="tag">Pulasr</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tag Cloud</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/BookKeeper/" style="font-size: 10px;">BookKeeper</a> <a href="/tags/Cassandra/" style="font-size: 20px;">Cassandra</a> <a href="/tags/HBase/" style="font-size: 15px;">HBase</a> <a href="/tags/Parser-combinator/" style="font-size: 10px;">Parser combinator</a> <a href="/tags/Pulasr/" style="font-size: 10px;">Pulasr</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2020/03/">March 2020</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/12/">December 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/11/">November 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/10/">October 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/09/">September 2019</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/">Parser combinator初探1-简易JSON解析器</a>
+          </li>
+        
+          <li>
+            <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/">Cassandra笔记1-Compaction策略</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/">HBase源码阅读随笔2-MemStore</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]-Pulsar简要介绍</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]BookKeeper简要介绍</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2022 Bao Qingping<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+
+  
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+  </div>
+</body>
+</html>

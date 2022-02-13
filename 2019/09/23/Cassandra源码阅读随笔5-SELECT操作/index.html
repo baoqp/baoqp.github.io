@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+
+  
+  <title>Cassandra源码阅读随笔5. SELECT操作 | Baoqp&#39;s Blog</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="select语句的解析在users表执行如下查询 1select * from users where id &#x3D; 3; 首先查询语句被解析为SelectStatement类的静态内部类RawStatement的实例，对于当前的语句，主要保存了要查询的表cdName和查询条件，其中查询条件用SingleColumnRelation表示。之后调用RawStatement的prepare()方法生成Se">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Cassandra源码阅读随笔5. SELECT操作">
+<meta property="og:url" content="http://example.com/2019/09/23/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%945-SELECT%E6%93%8D%E4%BD%9C/index.html">
+<meta property="og:site_name" content="Baoqp&#39;s Blog">
+<meta property="og:description" content="select语句的解析在users表执行如下查询 1select * from users where id &#x3D; 3; 首先查询语句被解析为SelectStatement类的静态内部类RawStatement的实例，对于当前的语句，主要保存了要查询的表cdName和查询条件，其中查询条件用SingleColumnRelation表示。之后调用RawStatement的prepare()方法生成Se">
+<meta property="og:locale">
+<meta property="article:published_time" content="2019-09-23T01:10:02.000Z">
+<meta property="article:modified_time" content="2019-11-03T10:49:45.956Z">
+<meta property="article:author" content="Bao Qingping">
+<meta property="article:tag" content="Cassandra">
+<meta name="twitter:card" content="summary">
+  
+    <link rel="alternate" href="/atom.xml" title="Baoqp&#39;s Blog" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.1"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">Baoqp&#39;s Blog</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://example.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main"><article id="post-Cassandra源码阅读随笔5-SELECT操作" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/09/23/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%945-SELECT%E6%93%8D%E4%BD%9C/" class="article-date">
+  <time datetime="2019-09-23T01:10:02.000Z" itemprop="datePublished">2019-09-23</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="article-title" itemprop="name">
+      Cassandra源码阅读随笔5. SELECT操作
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <h2 id="select语句的解析"><a href="#select语句的解析" class="headerlink" title="select语句的解析"></a>select语句的解析</h2><p>在users表执行如下查询</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">select * from users where id = 3;</span><br></pre></td></tr></table></figure>
+<p>首先查询语句被解析为SelectStatement类的静态内部类RawStatement的实例，对于当前的语句，主要保存了要查询的表cdName和查询条件，其中查询条件用SingleColumnRelation表示。之后调用RawStatement的prepare()方法生成SelectStatement实例。</p>
+<p>cassandra中查询条件的使用和mysql中的不同，会有更多的限制。比如不能直接使用clustering key进行查询，因为要查询所有分区，性能差，所以Cassandra默认不支持；同样也不能在普通列上面设置查询条件，只有在创建了二级索引之后才能使用，但是这样的话也会访问所有分区，所以建议根据要查询的关系再创建一个冗余的表。 </p>
+<p>生成SelectStatement之后，调用SelectStatement的execute()方法，该方法中主要把查询相关的信息组成ReadCommand，其中包括要查询的keyspace, columnfamily, key等，之后依次调用StorageProxy的read()和fetchRows()方法。 fetchRows()方法如下，主要有以下几个步骤：</p>
+<ol>
+<li>为每个读取命令（ReadCommand）生成ReadExecutor，并异步执行</li>
+<li>获取读取结果，如果出现DigestMismatchException，则要进行读取修复，进入步骤3，否则返回读取结果</li>
+<li>向所有节点发送读取修复的写入请求，并等待写入完成，写入完成后判断是否要再次读取。</li>
+</ol>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br><span class="line">107</span><br><span class="line">108</span><br><span class="line">109</span><br><span class="line">110</span><br><span class="line">111</span><br><span class="line">112</span><br><span class="line">113</span><br><span class="line">114</span><br><span class="line">115</span><br><span class="line">116</span><br><span class="line">117</span><br><span class="line">118</span><br><span class="line">119</span><br><span class="line">120</span><br><span class="line">121</span><br><span class="line">122</span><br><span class="line">123</span><br><span class="line">124</span><br><span class="line">125</span><br><span class="line">126</span><br><span class="line">127</span><br></pre></td><td class="code"><pre><span class="line">private static List&lt;Row&gt; fetchRows(List&lt;ReadCommand&gt; initialCommands, ConsistencyLevel consistencyLevel)</span><br><span class="line">        throws UnavailableException, ReadTimeoutException &#123;</span><br><span class="line">    List&lt;Row&gt; rows = new ArrayList&lt;&gt;(initialCommands.size());</span><br><span class="line">    // (avoid allocating a new list in the common case of nothing-to-retry)</span><br><span class="line">    List&lt;ReadCommand&gt; commandsToRetry = Collections.emptyList();</span><br><span class="line"></span><br><span class="line">    do &#123;</span><br><span class="line">        List&lt;ReadCommand&gt; commands = commandsToRetry.isEmpty() ? initialCommands : commandsToRetry;</span><br><span class="line">        AbstractReadExecutor[] readExecutors = new AbstractReadExecutor[commands.size()];</span><br><span class="line"></span><br><span class="line">        if (!commandsToRetry.isEmpty())</span><br><span class="line">            Tracing.trace(&quot;Retrying &#123;&#125; commands&quot;, commandsToRetry.size());</span><br><span class="line"></span><br><span class="line">        // 每个ReadCommand由ReadExecutor来执行</span><br><span class="line">        for (int i = 0; i &lt; commands.size(); i++) &#123;</span><br><span class="line">            ReadCommand command = commands.get(i);</span><br><span class="line">            assert !command.isDigestQuery();</span><br><span class="line"></span><br><span class="line">            AbstractReadExecutor exec = AbstractReadExecutor.getReadExecutor(command, consistencyLevel);</span><br><span class="line">            exec.executeAsync();</span><br><span class="line">            readExecutors[i] = exec;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        for (AbstractReadExecutor exec : readExecutors)</span><br><span class="line">            exec.maybeTryAdditionalReplicas();</span><br><span class="line"></span><br><span class="line">        // read results and make a second pass for any digest mismatches</span><br><span class="line">        List&lt;ReadCommand&gt; repairCommands = null;</span><br><span class="line">        List&lt;ReadCallback&lt;ReadResponse, Row&gt;&gt; repairResponseHandlers = null;</span><br><span class="line">        for (AbstractReadExecutor exec : readExecutors) &#123;</span><br><span class="line">            try &#123;</span><br><span class="line">                Row row = exec.get();</span><br><span class="line">                if (row != null) &#123;</span><br><span class="line">                    exec.command.maybeTrim(row);</span><br><span class="line">                    rows.add(row);</span><br><span class="line">                &#125;</span><br><span class="line"></span><br><span class="line">                if (logger.isDebugEnabled())</span><br><span class="line">                    logger.debug(&quot;Read: &#123;&#125; ms.&quot;, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - exec.handler.start));</span><br><span class="line">            &#125; catch (ReadTimeoutException ex) &#123;</span><br><span class="line">                ......</span><br><span class="line">                throw ex;</span><br><span class="line">            &#125; catch (DigestMismatchException ex) &#123; // 读取修复的处理</span><br><span class="line">                Tracing.trace(&quot;Digest mismatch: &#123;&#125;&quot;, ex);</span><br><span class="line"></span><br><span class="line">                ReadRepairMetrics.repairedBlocking.mark();</span><br><span class="line"></span><br><span class="line">                // 创建一个读取所有数据的ReadCommand</span><br><span class="line">                // Do a full data read to resolve the correct response (and repair node that need be)</span><br><span class="line">                RowDataResolver resolver = new RowDataResolver(exec.command.ksName, exec.command.key,</span><br><span class="line">                        exec.command.filter(), exec.command.timestamp);</span><br><span class="line"></span><br><span class="line">                ReadCallback&lt;ReadResponse, Row&gt; repairHandler = new ReadCallback&lt;&gt;(resolver,</span><br><span class="line">                        ConsistencyLevel.ALL,</span><br><span class="line">                        exec.getContactedReplicas().size(),</span><br><span class="line">                        exec.command,</span><br><span class="line">                        Keyspace.open(exec.command.getKeyspace()),</span><br><span class="line">                        exec.handler.endpoints);</span><br><span class="line"></span><br><span class="line">                if (repairCommands == null) &#123;</span><br><span class="line">                    repairCommands = new ArrayList&lt;&gt;();</span><br><span class="line">                    repairResponseHandlers = new ArrayList&lt;&gt;();</span><br><span class="line">                &#125;</span><br><span class="line">                repairCommands.add(exec.command);</span><br><span class="line">                repairResponseHandlers.add(repairHandler);</span><br><span class="line"></span><br><span class="line">                MessageOut&lt;ReadCommand&gt; message = exec.command.createMessage();</span><br><span class="line">                for (InetAddress endpoint : exec.getContactedReplicas()) &#123;</span><br><span class="line">                    Tracing.trace(&quot;Enqueuing full data read to &#123;&#125;&quot;, endpoint);</span><br><span class="line">                    MessagingService.instance().sendRR(message, endpoint, repairHandler);</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        commandsToRetry.clear();</span><br><span class="line"></span><br><span class="line">        // read the results for the digest mismatch retries</span><br><span class="line">        if (repairResponseHandlers != null) &#123;</span><br><span class="line">            for (int i = 0; i &lt; repairCommands.size(); i++) &#123;</span><br><span class="line">                ReadCommand command = repairCommands.get(i);</span><br><span class="line">                ReadCallback&lt;ReadResponse, Row&gt; handler = repairResponseHandlers.get(i);</span><br><span class="line"></span><br><span class="line">                Row row;</span><br><span class="line">                try &#123;</span><br><span class="line">                    row = handler.get();</span><br><span class="line">                &#125; catch (DigestMismatchException e) &#123;</span><br><span class="line">                    throw new AssertionError(e); // full data requested from each node here, no digests should be sent</span><br><span class="line">                &#125; catch (ReadTimeoutException e) &#123;</span><br><span class="line">                    ......</span><br><span class="line">                    throw new ReadTimeoutException(consistencyLevel, blockFor - 1, blockFor, true);</span><br><span class="line">                &#125;</span><br><span class="line"></span><br><span class="line">                RowDataResolver resolver = (RowDataResolver) handler.resolver;</span><br><span class="line">                try &#123;</span><br><span class="line">                    // 等待修改写入完成</span><br><span class="line">                    // wait for the repair writes to be acknowledged, to minimize impact on any replica that&#x27;s</span><br><span class="line">                    // behind on writes in case the out-of-sync row is read multiple times in quick succession</span><br><span class="line">                    FBUtilities.waitOnFutures(resolver.repairResults, DatabaseDescriptor.getWriteRpcTimeout());</span><br><span class="line">                &#125; catch (TimeoutException e) &#123;</span><br><span class="line">                    if (Tracing.isTracing())</span><br><span class="line">                        Tracing.trace(&quot;Timed out waiting on digest mismatch repair acknowledgements&quot;);</span><br><span class="line">                    else</span><br><span class="line">                        logger.debug(&quot;Timed out waiting on digest mismatch repair acknowledgements&quot;);</span><br><span class="line">                    int blockFor = consistencyLevel.blockFor(Keyspace.open(command.getKeyspace()));</span><br><span class="line">                    throw new ReadTimeoutException(consistencyLevel, blockFor - 1, blockFor, true);</span><br><span class="line">                &#125;</span><br><span class="line"></span><br><span class="line">                // retry any potential short reads 重新读取</span><br><span class="line">                ReadCommand retryCommand = command.maybeGenerateRetryCommand(resolver, row);</span><br><span class="line">                if (retryCommand != null) &#123;</span><br><span class="line">                    Tracing.trace(&quot;Issuing retry for read command&quot;);</span><br><span class="line">                    if (commandsToRetry == Collections.EMPTY_LIST)</span><br><span class="line">                        commandsToRetry = new ArrayList&lt;&gt;();</span><br><span class="line">                    commandsToRetry.add(retryCommand);</span><br><span class="line">                    continue;</span><br><span class="line">                &#125;</span><br><span class="line"></span><br><span class="line">                if (row != null) &#123;</span><br><span class="line">                    command.maybeTrim(row);</span><br><span class="line">                    rows.add(row);</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125; while (!commandsToRetry.isEmpty());</span><br><span class="line"></span><br><span class="line">    return rows;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>下面针对上面的步骤进行详细说明：</p>
+<h3 id="生成并执行ReadExecutor"><a href="#生成并执行ReadExecutor" class="headerlink" title="生成并执行ReadExecutor"></a>生成并执行ReadExecutor</h3><ol>
+<li><p>获取所有存活节点，并根据和当前的协调节点的“远近”进行排序，排序的信息由Snitch给出。大部分的Snitch实现继承了AbstractNetworkTopologySnitch抽象类，该抽象类基于网络拓扑信息来排序，具体地讲根据是否同一数据中心，同一机架来判断“远近”。还有一个特殊的Snitch实现DynamicEndpointSnitch，它封装了一个其他的Snitch实现类，在排序时会考虑各个节点的时延，时延数据保存在scores属性中。DynamicEndpointSnitch中有个BADNESS_THRESHOLD参数，当该参数为0，直接使用时延大小来排序；否则的话就进行一个特殊处理：把时延数据拷贝一份，一个根据subsnitch的排序结果来排序（记为subsnitchScore），一个是根据 时延的大小排序（记为sortedScore），如果在相同位置满足subsnitchScore &gt;  (1.0 + BADNESS_THRESHOLD) * sortedScore 就采样时延排序的结果，否则还是采用subsnitchScore的结果。在时延数据采集方面，要考虑采集的频率，以及最近的数据权重越大（使用ExponentiallyDecayingSample），DynamicEndpointSnitch中有个定期执行runnable负责scores数据的更新。此外，DynamicEndpointSnitch还有一个定期任务重置scores，否则故障恢复后的节点会一直被排在很后面而不会被请求数据，因此需要定期重置<sup>1</sup>。</p>
+</li>
+<li><p>产生随机数，并通过和配置参数的对比，选择ReadRepairDecision。由于hinted handoff的存在，正常情况下读取修复的发生概率不大。</p>
+</li>
+<li><p>根据consistencyLevel和repairDecision过滤出要访问的节点</p>
+</li>
+<li><p>根据retryType选择AbstractReadExecutor的子类。如果不考虑retryType，那么在读取时向一个节点读取具体的数据（对应NeverSpeculatingReadExecutor），向其他节点读取数据摘要。如果考虑了retryType（对应SpeculatingReadExecutor或AlwaysSpeculatingReadExecutor），那么可能向多于一个的节点读取具体数据；其中AlwaysSpeculatingReadExecutor总是会向一个附加的节点（如果存在）发送数据请求，SpeculatingReadExecutor会在读取超过sampleLatencyNanos（sampleLatencyNanos &lt; ReadTimeOut）时，对附加节点发起请求，这种方式被称为”rapid read protection”<sup>2</sup>，sampleLatencyNanos可以配置为具体的时间，也可以配置为percentile。</p>
+</li>
+</ol>
+ <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br></pre></td><td class="code"><pre><span class="line">public static AbstractReadExecutor getReadExecutor(ReadCommand command, ConsistencyLevel consistencyLevel) throws UnavailableException &#123;</span><br><span class="line">       Keyspace keyspace = Keyspace.open(command.ksName);</span><br><span class="line">       // 获取所有存活节点，并排序</span><br><span class="line">       List&lt;InetAddress&gt; allReplicas = StorageProxy.getLiveSortedEndpoints(keyspace, command.key);</span><br><span class="line">       // 产生随机数，并通过和配置参数的对比，选择ReadRepairDecision</span><br><span class="line">       ReadRepairDecision repairDecision = Schema.instance.getCFMetaData(command.ksName, command.cfName).newReadRepairDecision();</span><br><span class="line">       // 根据consistencyLevel和repairDecision过滤出要访问的节点</span><br><span class="line">       List&lt;InetAddress&gt; targetReplicas = consistencyLevel.filterForQuery(keyspace, allReplicas, repairDecision);</span><br><span class="line"></span><br><span class="line">       // 判断是否满足一致性要求，不满足的话抛出UnavailableException</span><br><span class="line">       consistencyLevel.assureSufficientLiveNodes(keyspace, targetReplicas);</span><br><span class="line"></span><br><span class="line">       // Fat client. Speculating read executors need access to cfs metrics and sampled latency, and fat clients</span><br><span class="line">       // can&#x27;t provide that. So, for now, fat clients will always use NeverSpeculatingReadExecutor.</span><br><span class="line">       if (StorageService.instance.isClientMode())</span><br><span class="line">           return new NeverSpeculatingReadExecutor(command, consistencyLevel, targetReplicas);</span><br><span class="line"></span><br><span class="line">       if (repairDecision != ReadRepairDecision.NONE)</span><br><span class="line">           ReadRepairMetrics.attempted.mark();</span><br><span class="line"></span><br><span class="line">       ColumnFamilyStore cfs = keyspace.getColumnFamilyStore(command.cfName);</span><br><span class="line">       RetryType retryType = cfs.metadata.getSpeculativeRetry().type;</span><br><span class="line"></span><br><span class="line">       // Speculative retry is disabled *OR* there are simply no extra replicas to speculate.</span><br><span class="line">       if (retryType == RetryType.NONE || consistencyLevel.blockFor(keyspace) == allReplicas.size())</span><br><span class="line">           return new NeverSpeculatingReadExecutor(command, consistencyLevel, targetReplicas);</span><br><span class="line"></span><br><span class="line">       if (targetReplicas.size() == allReplicas.size()) &#123;</span><br><span class="line">           // CL.ALL, RRD.GLOBAL or RRD.DC_LOCAL and a single-DC.</span><br><span class="line">           // We are going to contact every node anyway, so ask for 2 full data requests instead of 1, for redundancy</span><br><span class="line">           // (same amount of requests in total, but we turn 1 digest request into a full blown data request).</span><br><span class="line">           return new AlwaysSpeculatingReadExecutor(cfs, command, consistencyLevel, targetReplicas);</span><br><span class="line">       &#125;</span><br><span class="line"></span><br><span class="line">       // RRD.NONE or RRD.DC_LOCAL w/ multiple DCs.</span><br><span class="line">       InetAddress extraReplica = allReplicas.get(targetReplicas.size());</span><br><span class="line">       // With repair decision DC_LOCAL all replicas/target replicas may be in different order, so</span><br><span class="line">       // we might have to find a replacement that&#x27;s not already in targetReplicas.</span><br><span class="line">       if (repairDecision == ReadRepairDecision.DC_LOCAL &amp;&amp; targetReplicas.contains(extraReplica)) &#123;</span><br><span class="line">           for (InetAddress address : allReplicas) &#123;</span><br><span class="line">               if (!targetReplicas.contains(address)) &#123;</span><br><span class="line">                   extraReplica = address;</span><br><span class="line">                   break;</span><br><span class="line">               &#125;</span><br><span class="line">           &#125;</span><br><span class="line">       &#125;</span><br><span class="line">       targetReplicas.add(extraReplica);</span><br><span class="line"></span><br><span class="line">       if (retryType == RetryType.ALWAYS)</span><br><span class="line">           return new AlwaysSpeculatingReadExecutor(cfs, command, consistencyLevel, targetReplicas);</span><br><span class="line">       else // PERCENTILE or CUSTOM.</span><br><span class="line">           return new SpeculatingReadExecutor(cfs, command, consistencyLevel, targetReplicas);</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+<ol start="5">
+<li><p>调用ReadExecutore的executeAsync方法，SpeculatingReadExecutor的executeAsync方法如下，可以看到会向一个副本（最多两个）发送DataRequest，向其他副本发送DigestRequest。如果是请求本节点则向Stage.READ提交一个LocalReadRunnable，里面封装了ReadCommand和ReadCallback回调；如果不是本节点，则向目标节点发送消息。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">public void executeAsync() &#123;</span><br><span class="line">    // 最后一个副本作为&quot;extraReplica&quot;</span><br><span class="line">    List&lt;InetAddress&gt; initialReplicas = targetReplicas.subList(0, targetReplicas.size() - 1);</span><br><span class="line"></span><br><span class="line">    if (handler.blockfor &lt; initialReplicas.size()) &#123;</span><br><span class="line">        // We&#x27;re hitting additional targets for read repair.  Since our &quot;extra&quot; replica is the least-</span><br><span class="line">        // preferred by the snitch, we do an extra data read to start with against a replica more</span><br><span class="line">        // likely to reply; better to let RR fail than the entire query.</span><br><span class="line">        makeDataRequests(initialReplicas.subList(0, 2)); // TODO ???</span><br><span class="line">        if (initialReplicas.size() &gt; 2)</span><br><span class="line">            makeDigestRequests(initialReplicas.subList(2, initialReplicas.size()));</span><br><span class="line">    &#125; else &#123;</span><br><span class="line">        // not doing read repair; all replies are important, so it doesn&#x27;t matter which nodes we</span><br><span class="line">        // perform data reads against vs digest.</span><br><span class="line">        makeDataRequests(initialReplicas.subList(0, 1));</span><br><span class="line">        if (initialReplicas.size() &gt; 1)</span><br><span class="line">            makeDigestRequests(initialReplicas.subList(1, initialReplicas.size()));</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li><p>调用各个ReadExecutor的maybeTryAdditionalReplicas()，如果Snitch优先选择的节点没有快速返回，则向extraReplica发起请求。</p>
+</li>
+<li><p>读取结果会缓存到ReadCallback回调的resolver属性的replies中，当调用Executore的get()方法时，会调用resolver的resolve()方法（正常读取时的resolver是RowDigestResolver对象，如果只读取了一个节点，那么直接调用getData()方法返回读取数据），在reslove()方法中会比较DigestRequest和DataRequest的MD5数据摘要digest，如果有不相符抛出DigestMismatchException，否则返回DataRequest返回的数据内容。</p>
+</li>
+</ol>
+<h3 id="读取修复"><a href="#读取修复" class="headerlink" title="读取修复"></a>读取修复</h3><ol>
+<li>当捕捉到ReadTimeoutException异常时，会根据原有的ReadCommand创建一个读取所有可达节点的ReadCommand，同时ReadCallback回调的resolver设置为RowDataResolver实例。</li>
+<li>调用RowDataResolver的resolve()方法，在该方法中会对所有节点返回的数据（行数据，即column的迭代器），通过多路合并的方式，组成一条最新的数据（这里可能涉及到版本冲突的处理，Cassandra并没有采用vector clocks来处理，而是把每一列都作为独立操作，每一列都有一个时间戳，根据时间戳来选择数据的版本<sup>3</sup>）。之后调用scheduleRepairs()方法向所有需要更新数据的节点发送写入最新数据的请求，并同步等待这些写入完成。</li>
+<li>对于SliceFromReadCommand，可能要生成RetriedSliceFromReadCommand，然后重新执行读取流程。</li>
+</ol>
+<p>下面再看本地数据读取过程。前面说到ReadExecutor会向Stage.READ中提交一个LocalReadRunnable，该Runnable中主要调用了ColumnFamily的getColumnFamily()方法，该方法的主要逻辑：</p>
+<ol>
+<li>如果开启了RowCache，则直接从RowCache中读取</li>
+<li>如果RowCache中没有相关数据或者没有开启RowCache，则调用getTopLevelColumns()方法。该方法创建了一个CollationController()对象，又调用了它的collectAllData()方法。<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br></pre></td><td class="code"><pre><span class="line">public ColumnFamily getColumnFamily(QueryFilter filter) &#123;</span><br><span class="line">    assert name.equals(filter.getColumnFamilyName()) : filter.getColumnFamilyName();</span><br><span class="line"></span><br><span class="line">    ColumnFamily result = null;</span><br><span class="line"></span><br><span class="line">    long start = System.nanoTime();</span><br><span class="line">    try &#123;</span><br><span class="line">        int gcBefore = gcBefore(filter.timestamp);</span><br><span class="line">        if (isRowCacheEnabled()) &#123; // 开启了RowCache</span><br><span class="line">            assert !isIndex(); // CASSANDRA-5732</span><br><span class="line">            UUID cfId = metadata.cfId;</span><br><span class="line"></span><br><span class="line">            ColumnFamily cached = getThroughCache(cfId, filter);</span><br><span class="line">            if (cached == null) &#123;</span><br><span class="line">                logger.trace(&quot;cached row is empty&quot;);</span><br><span class="line">                return null;</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            result = filterColumnFamily(cached, filter);</span><br><span class="line">        &#125; else &#123;</span><br><span class="line">            ColumnFamily cf = getTopLevelColumns(filter, gcBefore);</span><br><span class="line"></span><br><span class="line">            if (cf == null)</span><br><span class="line">                return null;</span><br><span class="line"></span><br><span class="line">            result = removeDeletedCF(cf, gcBefore);</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        removeDroppedColumns(result); // 删除已经被drop的列</span><br><span class="line"></span><br><span class="line">        if (filter.filter instanceof SliceQueryFilter) &#123;</span><br><span class="line">           ......  // 更新metric</span><br><span class="line">        &#125;</span><br><span class="line">    &#125; finally &#123;</span><br><span class="line">        metric.readLatency.addNano(System.nanoTime() - start);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    return result;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+</ol>
+<p>collectAllData()方法如下，主要是分为两个步骤</p>
+<ol>
+<li>查找key对应的row，并返回对应的column迭代器</li>
+<li>把多个column迭代器进行归并。</li>
+</ol>
+<p>从代码中可以发现会查询所有的memetable和sstable（根据delete time可以过滤掉一部分无须访问的），而sstable的读取是IO操作，从而可以推断如果sstable数量很大，那么势必会影响到读取性能。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br></pre></td><td class="code"><pre><span class="line">private ColumnFamily collectAllData() &#123;</span><br><span class="line"></span><br><span class="line">    ColumnFamilyStore.ViewFragment view = cfs.markReferenced(filter.key);</span><br><span class="line">    List&lt;OnDiskAtomIterator&gt; iterators = new ArrayList&lt;&gt;(Iterables.size(view.memtables) + view.sstables.size());</span><br><span class="line">    ColumnFamily returnCF = ArrayBackedSortedColumns.factory.create(cfs.metadata, filter.filter.isReversed());</span><br><span class="line"></span><br><span class="line">    try &#123;</span><br><span class="line">        Tracing.trace(&quot;Merging memtable tombstones&quot;);</span><br><span class="line">        for (Memtable memtable : view.memtables) &#123;</span><br><span class="line">            OnDiskAtomIterator iter = filter.getMemtableColumnIterator(memtable);</span><br><span class="line">            if (iter != null) &#123;</span><br><span class="line">                returnCF.delete(iter.getColumnFamily()); // 更新deleteInfo</span><br><span class="line">                iterators.add(iter);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        // 根据maxTimestamp排序</span><br><span class="line">        Collections.sort(view.sstables, SSTable.maxTimestampComparator);</span><br><span class="line">        List&lt;SSTableReader&gt; skippedSSTables = null;</span><br><span class="line">        long mostRecentRowTombstone = Long.MIN_VALUE;</span><br><span class="line">        long minTimestamp = Long.MAX_VALUE;</span><br><span class="line">        int nonIntersectingSSTables = 0;</span><br><span class="line"></span><br><span class="line">        for (SSTableReader sstable : view.sstables) &#123;</span><br><span class="line">            minTimestamp = Math.min(minTimestamp, sstable.getMinTimestamp());</span><br><span class="line">           </span><br><span class="line">            // 如果maxTimeStamp都小于row tombstone的时间，那么可以直接跳过</span><br><span class="line">            if (sstable.getMaxTimestamp() &lt; mostRecentRowTombstone)</span><br><span class="line">                break;</span><br><span class="line"></span><br><span class="line">            if (!filter.shouldInclude(sstable)) &#123;</span><br><span class="line">                nonIntersectingSSTables++;</span><br><span class="line">                // sstable contains no tombstone if maxLocalDeletionTime == Integer.MAX_VALUE, so we can safely skip those entirely</span><br><span class="line">                if (sstable.getSSTableMetadata().maxLocalDeletionTime != Integer.MAX_VALUE) &#123;</span><br><span class="line">                    if (skippedSSTables == null)</span><br><span class="line">                        skippedSSTables = new ArrayList&lt;&gt;();</span><br><span class="line">                    skippedSSTables.add(sstable);</span><br><span class="line">                &#125;</span><br><span class="line">                continue;</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            sstable.incrementReadCount();</span><br><span class="line">            // 根据可以key找到对应的row，返回column的迭代器</span><br><span class="line">            OnDiskAtomIterator iter = filter.getSSTableColumnIterator(sstable);</span><br><span class="line">            iterators.add(iter);</span><br><span class="line">            if (iter.getColumnFamily() != null) &#123;</span><br><span class="line">                ColumnFamily cf = iter.getColumnFamily(); // 返回只包含deleteInfo的cf</span><br><span class="line">                if (cf.isMarkedForDelete())</span><br><span class="line">                    mostRecentRowTombstone = cf.deletionInfo().getTopLevelDeletion().markedForDeleteAt;</span><br><span class="line"></span><br><span class="line">                returnCF.delete(cf); // 更新deleteInfo</span><br><span class="line">                sstablesIterated++;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        int includedDueToTombstones = 0;</span><br><span class="line">        // Check for row tombstone in the skipped sstables</span><br><span class="line">        if (skippedSSTables != null) &#123;</span><br><span class="line">            for (SSTableReader sstable : skippedSSTables) &#123;</span><br><span class="line">                if (sstable.getMaxTimestamp() &lt;= minTimestamp)</span><br><span class="line">                    continue;</span><br><span class="line"></span><br><span class="line">                sstable.incrementReadCount();</span><br><span class="line">                OnDiskAtomIterator iter = filter.getSSTableColumnIterator(sstable);</span><br><span class="line">                ColumnFamily cf = iter.getColumnFamily();</span><br><span class="line">                // we are only interested in row-level tombstones here, and only if markedForDeleteAt is larger than minTimestamp</span><br><span class="line">                if (cf != null &amp;&amp; cf.deletionInfo().getTopLevelDeletion().markedForDeleteAt &gt; minTimestamp) &#123;</span><br><span class="line">                    includedDueToTombstones++;</span><br><span class="line">                    iterators.add(iter);</span><br><span class="line">                    returnCF.delete(cf.deletionInfo().getTopLevelDeletion());</span><br><span class="line">                    sstablesIterated++;</span><br><span class="line">                &#125; else &#123;</span><br><span class="line">                    FileUtils.closeQuietly(iter);</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        </span><br><span class="line">        // we need to distinguish between &quot;there is no data at all for this row&quot; (BF will let us rebuild that efficiently)</span><br><span class="line">        // and &quot;there used to be data, but it&#x27;s gone now&quot; (we should cache the empty CF so we don&#x27;t need to rebuild that slower)</span><br><span class="line">        if (iterators.isEmpty())</span><br><span class="line">            return null;</span><br><span class="line"></span><br><span class="line">        Tracing.trace(&quot;Merging data from memtables and &#123;&#125; sstables&quot;, sstablesIterated);</span><br><span class="line">        filter.collateOnDiskAtom(returnCF, iterators, gcBefore); // 合并数据</span><br><span class="line"></span><br><span class="line">        // Caller is responsible for final removeDeletedCF.  This is important for cacheRow to work correctly:</span><br><span class="line">        return returnCF;</span><br><span class="line">    &#125; finally &#123;</span><br><span class="line">        for (OnDiskAtomIterator iter : iterators)</span><br><span class="line">            FileUtils.closeQuietly(iter);</span><br><span class="line">        SSTableReader.releaseReferences(view.sstables);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="获取column迭代器"><a href="#获取column迭代器" class="headerlink" title="获取column迭代器"></a>获取column迭代器</h3><p>获取column迭代器就是读取sstable文件的过程。调用<code>filter.getSSTableColumnIterator(sstable)</code>生成了一个SSTableSliceIterator对象，看下SSTableSliceIterator的构造方法：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">public SSTableSliceIterator(SSTableReader sstable, DecoratedKey key, ColumnSlice[] slices, boolean reversed) &#123;</span><br><span class="line">    this.key = key;</span><br><span class="line">    // 查找RowIndexEntry</span><br><span class="line">    RowIndexEntry indexEntry = sstable.getPosition(key, SSTableReader.Operator.EQ);</span><br><span class="line">    // 创建OnDiskAtomIterator</span><br><span class="line">    this.reader = indexEntry == null ? null : createReader(sstable, indexEntry, null, slices, reversed);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>其中getPosition方法主要有一下几步：</p>
+<ol>
+<li><p>如果操作符是等于(EQ)，则先在BloomFilter中查询是否可能存在该key</p>
+</li>
+<li><p>如果操作符是等于(EQ)或大于等于(GE)，则在RowCache（默认开启）中查找是否缓存过对应的RowIndexEntry，如果是则返回，否则进入下一步。</p>
+</li>
+<li><p>在IndexSummary查找大于等于key的第一项，那么从该项的前一项所指向的位置（IndexSummary能保存的是key在索引文件中的位置）开始在索引文件中查找，并返回满足条件的索引项。如果要查找的key小于IndexSummary的第一项（也就是索引文件中的最小key），那么说明该sstable中不存在该key（对于&lt;, = 或 &gt;= 操作），可以跳过。</p>
+</li>
+</ol>
+<p>获取到索引项之后就可以知道要读取的row在数据文件中的位置，然后调用createReader()方法创建一个OnDiskAtomIterator，以SimpleSliceReader类为例，该类的构造方法中首先把数据文件定位到索引项所指的位置，然后读取row的deleteInfo并保存一个空的ColumnFamily对象中，最后创建一个column的迭代器。</p>
+<h3 id="column迭代器的多路归并"><a href="#column迭代器的多路归并" class="headerlink" title="column迭代器的多路归并"></a>column迭代器的多路归并</h3><p>在前一步已经返回了多个column的迭代器，下面对这些迭代器进行多路归并，归并的目的是把各个sstable中不同版本的用一列数据进行统一。主要逻辑如下，其中多路合并主要利用了MergeIterator类，此外合并前的iterator中的元素必须是有序。MergeIterator的多路归并实现中，主要利用了最小堆，把各个iterator根据当前的元素放入堆中，然后查看堆顶的iterator，如果堆顶iterator的当前元素值和前一个不同，说明是一个新的值了，那么就对之前取出的元素应用reducer。堆顶取出的itrator如果还有元素需要重新放入队中。如此循环直到所有的iterator都遍历完成。MergeIterator是一个优雅的实现，返回的也是一个iterator，并不是立即计算的，也就是说是一种lazily evaluation。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br></pre></td><td class="code"><pre><span class="line">public static void collateOnDiskAtom(final ColumnFamily returnCF, List&lt;? extends Iterator&lt;? extends OnDiskAtom&gt;&gt; toCollate,</span><br><span class="line">                                     IDiskAtomFilter filter, int gcBefore, long timestamp) &#123;</span><br><span class="line">    List&lt;Iterator&lt;Column&gt;&gt; filteredIterators = new ArrayList&lt;&gt;(toCollate.size());</span><br><span class="line">    for (Iterator&lt;? extends OnDiskAtom&gt; iter : toCollate)</span><br><span class="line">        // 迭代iterator的时候跳过tombstone，tombstone存到returnCF</span><br><span class="line">        filteredIterators.add(gatherTombstones(returnCF, iter));</span><br><span class="line">    collateColumns(returnCF, filteredIterators, filter, gcBefore, timestamp);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">public static void collateColumns(final ColumnFamily returnCF, List&lt;? extends Iterator&lt;Column&gt;&gt; toCollate,</span><br><span class="line">                                  IDiskAtomFilter filter, int gcBefore, long timestamp) &#123;</span><br><span class="line">    final Comparator&lt;Column&gt; fcomp = filter.getColumnComparator(returnCF.getComparator());</span><br><span class="line">    // 定义reducer，处理具有相同名称的column</span><br><span class="line">    MergeIterator.Reducer&lt;Column, Column&gt; reducer = new MergeIterator.Reducer&lt;Column, Column&gt;() &#123;</span><br><span class="line">        Column current;</span><br><span class="line"></span><br><span class="line">        public void reduce(Column next) &#123;</span><br><span class="line">            assert current == null || fcomp.compare(current, next) == 0;</span><br><span class="line">            // reconcile根据时间戳获取最新版本的数据</span><br><span class="line">            current = current == null ? next : current.reconcile(next, HeapAllocator.instance);</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        protected Column getReduced() &#123;</span><br><span class="line">            assert current != null;</span><br><span class="line">            Column toReturn = current;</span><br><span class="line">            current = null;</span><br><span class="line">            return toReturn;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;;</span><br><span class="line">    Iterator&lt;Column&gt; reduced = MergeIterator.get(toCollate, fcomp, reducer);</span><br><span class="line"></span><br><span class="line">    filter.collectReducedColumns(returnCF, reduced, gcBefore, timestamp);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>多路归并之后，再调用collectReducedColumns进行处理。首先构建一个ColumnCounter，需要注意的是，这里的ColumnCounter并不是列数量计数，而是列分组的计数，分组的依据是列名有相同的前缀，而前缀就是clustering key。回忆下，在写入的时候，列名被改成了clustering key + column name。 因此同一个分组的各个column组成了我们通常意义上的一行记录。然后就遍历归并后的column iterator，如果该column没有被删除或过期，则加入到columnfamily中。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br></pre></td><td class="code"><pre><span class="line">public void collectReducedColumns(ColumnFamily container, Iterator&lt;Column&gt; reducedColumns, int gcBefore, long now) &#123;</span><br><span class="line">    // 此处是分组基数</span><br><span class="line">    columnCounter = columnCounter(container.getComparator(), now);</span><br><span class="line">    // 多路归并的时候把所有的tomestone都合并了</span><br><span class="line">    DeletionInfo.InOrderTester tester = container.deletionInfo().inOrderTester(reversed);</span><br><span class="line"></span><br><span class="line">    while (reducedColumns.hasNext()) &#123;</span><br><span class="line">        Column column = reducedColumns.next();</span><br><span class="line"></span><br><span class="line">        columnCounter.count(column, tester);</span><br><span class="line"></span><br><span class="line">        if (columnCounter.live() &gt; count) // 大于limit设置的数量，不再读取</span><br><span class="line">            break;</span><br><span class="line"></span><br><span class="line">        // tombstone过多，直接报错        </span><br><span class="line">        if (respectTombstoneThresholds() &amp;&amp; columnCounter.ignored() &gt; DatabaseDescriptor.getTombstoneFailureThreshold()) &#123;</span><br><span class="line">            ......</span><br><span class="line">            throw new TombstoneOverwhelmingException();</span><br><span class="line">        &#125;</span><br><span class="line">        // 没有被删除的column放入到columnfamily中</span><br><span class="line">        container.addIfRelevant(column, tester, gcBefore);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    </span><br><span class="line">    if (respectTombstoneThresholds() &amp;&amp; columnCounter.ignored() &gt; DatabaseDescriptor.getTombstoneWarnThreshold()) &#123;</span><br><span class="line">         // 打印warn日志</span><br><span class="line">         ......</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>至此fetchRows()的流程结束，再次回到SelectStatement的execute()方法中，再返回最终结果前，还要调用processResults()进行处理，该方法的主要逻辑还是先把row中的column按照clustering key分组，然后根据把分组创建成寻常意义上的记录行，并添加上需要的partition key，最后封装成ResultSet返回。</p>
+<p>Reference</p>
+<ol>
+<li><p><a target="_blank" rel="noopener" href="https://www.datastax.com/dev/blog/dynamic-snitching-in-cassandra-past-present-and-future">https://www.datastax.com/dev/blog/dynamic-snitching-in-cassandra-past-present-and-future</a></p>
+</li>
+<li><p><a target="_blank" rel="noopener" href="https://www.datastax.com/dev/blog/rapid-read-protection-in-cassandra-2-0-2">https://www.datastax.com/dev/blog/rapid-read-protection-in-cassandra-2-0-2</a></p>
+</li>
+<li><p><a target="_blank" rel="noopener" href="https://www.datastax.com/dev/blog/why-cassandra-doesnt-need-vector-clocks">https://www.datastax.com/dev/blog/why-cassandra-doesnt-need-vector-clocks</a></p>
+</li>
+</ol>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/09/23/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%945-SELECT%E6%93%8D%E4%BD%9C/" data-id="ckzldzrau000xtofw539n91cg" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+    <a href="/2019/09/28/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%946-UPDATE%E5%92%8CDELETE%E6%93%8D%E4%BD%9C/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Newer</strong>
+      <div class="article-nav-title">
+        
+          Cassandra源码阅读随笔6. UPDATE和DELETE操作
+        
+      </div>
+    </a>
+  
+  
+    <a href="/2019/09/20/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%944-%E5%93%88%E5%B8%8C%E7%8E%AF%E5%92%8Chinted-handoff/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Older</strong>
+      <div class="article-nav-title">Cassandra源码阅读随笔4. 哈希环和hinted handoff</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tags</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/BookKeeper/" rel="tag">BookKeeper</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Parser-combinator/" rel="tag">Parser combinator</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Pulasr/" rel="tag">Pulasr</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tag Cloud</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/BookKeeper/" style="font-size: 10px;">BookKeeper</a> <a href="/tags/Cassandra/" style="font-size: 20px;">Cassandra</a> <a href="/tags/HBase/" style="font-size: 15px;">HBase</a> <a href="/tags/Parser-combinator/" style="font-size: 10px;">Parser combinator</a> <a href="/tags/Pulasr/" style="font-size: 10px;">Pulasr</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2020/03/">March 2020</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/12/">December 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/11/">November 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/10/">October 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/09/">September 2019</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/">Parser combinator初探1-简易JSON解析器</a>
+          </li>
+        
+          <li>
+            <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/">Cassandra笔记1-Compaction策略</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/">HBase源码阅读随笔2-MemStore</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]-Pulsar简要介绍</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]BookKeeper简要介绍</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2022 Bao Qingping<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+
+  
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+  </div>
+</body>
+</html>

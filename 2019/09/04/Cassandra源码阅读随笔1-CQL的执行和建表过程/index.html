@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+
+  
+  <title>Cassandra源码阅读随笔1. CQL的执行和建表过程 | Baoqp&#39;s Blog</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="cql简介cql是Cassandra定义的类似于SQL的查询语言，可以打开Cassandra源码的bin目录下的cqlsh脚本。cql的执行大体上分为两个步骤：解析语句和执行语句。Cassandra中使用Antlr生成cql语句的lexer和parser。Antlr是一种自上而下的解析器，具体使用方法参考《Antlr权威指南》。cql语句解析后生成Statement对象，之后进行参数绑定，最后调用">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Cassandra源码阅读随笔1. CQL的执行和建表过程">
+<meta property="og:url" content="http://example.com/2019/09/04/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%941-CQL%E7%9A%84%E6%89%A7%E8%A1%8C%E5%92%8C%E5%BB%BA%E8%A1%A8%E8%BF%87%E7%A8%8B/index.html">
+<meta property="og:site_name" content="Baoqp&#39;s Blog">
+<meta property="og:description" content="cql简介cql是Cassandra定义的类似于SQL的查询语言，可以打开Cassandra源码的bin目录下的cqlsh脚本。cql的执行大体上分为两个步骤：解析语句和执行语句。Cassandra中使用Antlr生成cql语句的lexer和parser。Antlr是一种自上而下的解析器，具体使用方法参考《Antlr权威指南》。cql语句解析后生成Statement对象，之后进行参数绑定，最后调用">
+<meta property="og:locale">
+<meta property="article:published_time" content="2019-09-04T01:31:07.000Z">
+<meta property="article:modified_time" content="2019-11-03T10:12:05.415Z">
+<meta property="article:author" content="Bao Qingping">
+<meta property="article:tag" content="Cassandra">
+<meta name="twitter:card" content="summary">
+  
+    <link rel="alternate" href="/atom.xml" title="Baoqp&#39;s Blog" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.1"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">Baoqp&#39;s Blog</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://example.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main"><article id="post-Cassandra源码阅读随笔1-CQL的执行和建表过程" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/09/04/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%941-CQL%E7%9A%84%E6%89%A7%E8%A1%8C%E5%92%8C%E5%BB%BA%E8%A1%A8%E8%BF%87%E7%A8%8B/" class="article-date">
+  <time datetime="2019-09-04T01:31:07.000Z" itemprop="datePublished">2019-09-04</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="article-title" itemprop="name">
+      Cassandra源码阅读随笔1. CQL的执行和建表过程
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <h2 id="cql简介"><a href="#cql简介" class="headerlink" title="cql简介"></a>cql简介</h2><p>cql是Cassandra定义的类似于SQL的查询语言，可以打开Cassandra源码的bin目录下的cqlsh脚本。cql的执行大体上分为两个步骤：解析语句和执行语句。Cassandra中使用Antlr生成cql语句的lexer和parser。Antlr是一种自上而下的解析器，具体使用方法参考《Antlr权威指南》。cql语句解析后生成Statement对象，之后进行参数绑定，最后调用Statement对象的execute()方法。</p>
+<p>对于cqlsh命令行中输入的cql语句，由CassandraServer类中的execute_cql3_query()方法处理。该方法首先从ByteBuffer中还原cql语句，然后交给QueryHandler处理。QueryHandler是一个接口，如果没有自定义该接口的实现类，那么进入默认的实现类QueryProcessor的process()方法。</p>
+<p>process()方法中首先调用parseStatement()方法进行cql解析，返回ParsedStatement的子类对象。然后调用prepare()方法进行参数绑定，如果参数个数和值的个数不同，则抛出异常。之后在processStatement方法中分别调用statement对象的checkAcccess()和vaidate()方法进行访问控制和有效性校验，最后调用execute()方法执行语句。</p>
+<h2 id="keyspace的创建"><a href="#keyspace的创建" class="headerlink" title="keyspace的创建"></a>keyspace的创建</h2><p>Cassandra中的keyspace是类似于mysql中的database的概念，可以通过cql语句来创建keyspace，比如</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">CREATE KEYSPACE IF NOT EXISTS cql_demo WITH REPLICATION=&#123;&#x27;class&#x27;:&#x27;SimpleStrategy&#x27;,&#x27;replication_factor&#x27;:2&#125;;</span><br></pre></td></tr></table></figure>
+
+<p>CREATE KEYSPACE语句会被解析成一个CreateKeyspaceStatement对象，在Cql.g中找到对应的语法生成式如下，可以看到主要是为了解析出keyspace的名称，以及相关的设置属性。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">createKeyspaceStatement returns [CreateKeyspaceStatement expr]</span><br><span class="line">    @init &#123;</span><br><span class="line">        KSPropDefs attrs = new KSPropDefs();</span><br><span class="line">        boolean ifNotExists = false;</span><br><span class="line">    &#125;</span><br><span class="line">    : K_CREATE K_KEYSPACE (K_IF K_NOT K_EXISTS &#123; ifNotExists = true; &#125; )? ks=keyspaceName</span><br><span class="line">      K_WITH properties[attrs] &#123; $expr = new CreateKeyspaceStatement(ks, attrs, ifNotExists); &#125;</span><br><span class="line">    ;</span><br></pre></td></tr></table></figure>
+
+<p>CreateKeyspaceStatement继承了抽象类SchemaAlteringStatement，该类的execute()方法主要调用了抽象方法announceMigration()。CreateKeyspaceStatement中的重写实现如下</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">public boolean announceMigration() throws RequestValidationException &#123;</span><br><span class="line">    try &#123;</span><br><span class="line">        MigrationManager.announceNewKeyspace(attrs.asKSMetadata(name));</span><br><span class="line">        return true;</span><br><span class="line">    &#125; catch (AlreadyExistsException e) &#123;</span><br><span class="line">        if (ifNotExists)</span><br><span class="line">            return false;</span><br><span class="line">        throw e;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>可以看到主要调用了MigrationManager类中的方法。首先会创建一个包含了keyspace元数据的KSMetaData对象，然后调用announceNewKeyspace()另外一个重载方法。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">public static void announceNewKeyspace(KSMetaData ksm, long timestamp) throws ConfigurationException &#123;</span><br><span class="line">    ksm.validate();</span><br><span class="line"></span><br><span class="line">    if (Schema.instance.getKSMetaData(ksm.name) != null)</span><br><span class="line">        throw new AlreadyExistsException(ksm.name);</span><br><span class="line"></span><br><span class="line">    logger.info(String.format(&quot;Create new Keyspace: %s&quot;, ksm));</span><br><span class="line">    announce(ksm.toSchema(timestamp));</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">public RowMutation toSchema(long timestamp) &#123;</span><br><span class="line">    RowMutation rm = new RowMutation(Keyspace.SYSTEM_KS, SystemKeyspace.getSchemaKSKey(name)); // ks: system</span><br><span class="line">    ColumnFamily cf = rm.addOrGet(CFMetaData.SchemaKeyspacesCf);  // cf: schema_keyspaces</span><br><span class="line"></span><br><span class="line">    cf.addColumn(Column.create(durableWrites, timestamp, &quot;durable_writes&quot;));</span><br><span class="line">    cf.addColumn(Column.create(strategyClass.getName(), timestamp, &quot;strategy_class&quot;));</span><br><span class="line">    cf.addColumn(Column.create(json(strategyOptions), timestamp, &quot;strategy_options&quot;));</span><br><span class="line"></span><br><span class="line">    for (CFMetaData cfm : cfMetaData.values())</span><br><span class="line">        cfm.toSchema(rm, timestamp);</span><br><span class="line"></span><br><span class="line">    return rm;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>该方法中调用toSchema()方法生成了一个RowMutation对象，该对象代表了一条记录的变更。在Cassandra中，keyspace, columnfamily和 column的schema信息分别保存在SCHEMA_{KEYSPACES, COLUMNFAMILIES, COLUMNS}_CF表中。</p>
+<p>此处我们新建一个keyspace，因此需要向SCHEMA_KEYSPACES_CF中加入一条记录。announce()方法中会把该变更操作作为runnable提交到MIGRATION stage，同时把keyspace的变更信息发送给其他存活的节点。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">private static Future announce(final Collection&lt;RowMutation&gt; schema) &#123;</span><br><span class="line">    Future&lt;?&gt; f = StageManager.getStage(Stage.MIGRATION).submit(new WrappedRunnable() &#123;</span><br><span class="line">        protected void runMayThrow() throws IOException, ConfigurationException &#123;</span><br><span class="line">            DefsTables.mergeSchema(schema);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;);</span><br><span class="line"></span><br><span class="line">    for (InetAddress endpoint : Gossiper.instance.getLiveMembers()) &#123;</span><br><span class="line">        // only push schema to nodes with known and equal versions</span><br><span class="line">        if (!endpoint.equals(FBUtilities.getBroadcastAddress()) &amp;&amp;</span><br><span class="line">                MessagingService.instance().knowsVersion(endpoint) &amp;&amp;</span><br><span class="line">                MessagingService.instance().getRawVersion(endpoint) == MessagingService.current_version)</span><br><span class="line">            pushSchemaMutation(endpoint, schema);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">     return f;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>之后会调用该方法返回的future对象的get方法以等待操作完成。mergeSchema()方法的处理如下：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br></pre></td><td class="code"><pre><span class="line">public static synchronized void mergeSchema(Collection&lt;RowMutation&gt; mutations) &#123;</span><br><span class="line">        // current state of the schema</span><br><span class="line">        // 获取当前keyspace和columnfamily的schema信息，就是扫描当前所有</span><br><span class="line">        Map&lt;DecoratedKey, ColumnFamily&gt; oldKeyspaces = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_KEYSPACES_CF);</span><br><span class="line">        Map&lt;DecoratedKey, ColumnFamily&gt; oldColumnFamilies = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_COLUMNFAMILIES_CF);</span><br><span class="line"></span><br><span class="line">        // 新建keyspace对象，并保存到Schema单例中</span><br><span class="line">        // 一个mutation一个记录写入相应的表（此处写入的是memtable），此处的表是SCHEMA_KEYSPACES_CF</span><br><span class="line">        for (RowMutation mutation : mutations)</span><br><span class="line">            mutation.apply();</span><br><span class="line"></span><br><span class="line">        // 存储schema相关的columnfamily的memtable强制刷盘</span><br><span class="line">        if (!StorageService.instance.isClientMode())</span><br><span class="line">            flushSchemaCFs();</span><br><span class="line"></span><br><span class="line">        // with new data applied</span><br><span class="line">        // 重新读取schema信息</span><br><span class="line">        Map&lt;DecoratedKey, ColumnFamily&gt; newKeyspaces = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_KEYSPACES_CF);</span><br><span class="line">        Map&lt;DecoratedKey, ColumnFamily&gt; newColumnFamilies = SystemKeyspace.getSchema(SystemKeyspace.SCHEMA_COLUMNFAMILIES_CF);</span><br><span class="line"></span><br><span class="line">        Set&lt;String&gt; keyspacesToDrop = mergeKeyspaces(oldKeyspaces, newKeyspaces);</span><br><span class="line">        mergeColumnFamilies(oldColumnFamilies, newColumnFamilies);</span><br><span class="line"></span><br><span class="line">        // it is safe to drop a keyspace only when all nested ColumnFamilies where deleted</span><br><span class="line">        // 清除要删掉的keyspace，比如使用了drop keyspace命令</span><br><span class="line">        for (String keyspaceToDrop : keyspacesToDrop)</span><br><span class="line">            dropKeyspace(keyspaceToDrop);</span><br><span class="line"></span><br><span class="line">        // 把schema相关的所有列信息用于计算md5值，然后用该值生成UUID作为版本号，然后写入系统表空间的local表中</span><br><span class="line">        Schema.instance.updateVersionAndAnnounce();</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+<p>至此keyspace的创建流程结束，总结起来就是在SCHEMA_KEYSPACES_CF表中写入一条记录（数据的写入在之后的章节中说明），并把相关的元数据保存到Schema单例中。</p>
+<h2 id="columnfamily的创建"><a href="#columnfamily的创建" class="headerlink" title="columnfamily的创建"></a>columnfamily的创建</h2><p>在创建columnfamily通过会使用<code>use cql_demo</code>语句来切换到对应的keyspace，该语句的作用比较简单，就是对当前会话的clientState对象的keyspace属性进行赋值，并作为默认的keyspace。</p>
+<p>和keysapce的创建类似，我们用cql语句来创建columnfamily :</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">CREATE TABLE users (</span><br><span class="line">	id int,</span><br><span class="line">    age int, </span><br><span class="line">	user_name varchar,</span><br><span class="line">	PRIMARY KEY(id, age)</span><br><span class="line">);</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>建表语句解析后生成CreateTableStatement的静态内部类RawStatement的对象，调用RawStatement的prepare()方法返回CreateTableStatement。CreateTableStatement的主要属性说明如下：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">public class CreateTableStatement extends SchemaAlteringStatement &#123;</span><br><span class="line"></span><br><span class="line">    // clustering key 对应的类型，如果是复合的，那么是CompositeType类型的。</span><br><span class="line">    // cassandra会给comparator都加上一个UTF8Type，所以例子中的建表语句的生成comparator就是复合类型(Int32Type, UTF8Type)</span><br><span class="line">    public AbstractType&lt;?&gt; comparator; </span><br><span class="line">    private AbstractType&lt;?&gt; defaultValidator;</span><br><span class="line">    </span><br><span class="line">    // partition key对应的类型，如果是复合的，那么是CompositeType类型的</span><br><span class="line">    private AbstractType&lt;?&gt; keyValidator; </span><br><span class="line"></span><br><span class="line">    private final List&lt;ByteBuffer&gt; keyAliases = new ArrayList&lt;&gt;();    // partition key</span><br><span class="line">    private final List&lt;ByteBuffer&gt; columnAliases = new ArrayList&lt;&gt;(); // clustering key</span><br><span class="line">    private ByteBuffer valueAlias;</span><br><span class="line"></span><br><span class="line">    private boolean isDense;</span><br><span class="line"></span><br><span class="line">    // 除了partition key和clustering key对应的类之外的其他列</span><br><span class="line">    private final Map&lt;ColumnIdentifier, AbstractType&gt; columns = new HashMap&lt;&gt;();</span><br><span class="line">    private final Set&lt;ColumnIdentifier&gt; staticColumns;</span><br><span class="line">    private final CFPropDefs properties;</span><br><span class="line">    private final boolean ifNotExists;</span><br><span class="line">    </span><br><span class="line">&#125;    </span><br></pre></td></tr></table></figure>
+<p>CreateTableStatement的execute()执行路径和CreateKeyspaceStatement类似，主要进行了如下调用</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">MigrationManager.announceNewColumnFamily(getCFMetaData())</span><br></pre></td></tr></table></figure>
+<p>首先构建columnfamily的元数据CFMetaData。CFMetaData中主要保存了ksName, cfName，column的定义column_metadata，cf的类型cfType（Standard或Super），以及一些可选的属性等。其中column_metadata的每一列用ColumnDefinition表示，相比于CreateTableStatement中的ColumnIdentifier，ColumnDefinition的定义中多了indexType和indexName（二级索引secondaryIndex相关），此外还明确定义了列的类型：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">public enum Type &#123;</span><br><span class="line">    PARTITION_KEY,</span><br><span class="line">    CLUSTERING_KEY,</span><br><span class="line">    REGULAR,</span><br><span class="line">    COMPACT_VALUE,</span><br><span class="line">    STATIC</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>announceNewColumnFamily()方法中的主要逻辑如下：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">announce(addSerializedKeyspace(cfm.toSchema(FBUtilities.timestampMicros()), cfm.ksName));</span><br></pre></td></tr></table></figure>
+<p>cfm.toSchema和ksm.toSchema的类似，也是生成一条保存了CFMetaData数据的schema_columnfamilies记录，addSerializedKeyspace()方法读取本地schema_keyspaces中关于该cf所属keyspace的相关信息，该方法调用主要是为了防止在集群中keysapce在某个节点创建后，keyspace还未传播到其他节点，而又在该节点执行创建该keyspace下的columnfamily的操作引起的错误。因为本地未获取到keyspace，addSerializedKeyspace中的assert会及时报错。</p>
+<p>announce()方法的调用路径和创建keyspace时是一样的，唯一不同的是此时我们新建的是columnfamily，会调用addColumnFamily()方法来进行处理，其中最主要的方法是initCf()方法的调用，该方法中会创建ColumnFamilyStore对象（顾名思义，该类是用于管理columnfamily的存储，在后文中介绍），同时在Cassandra的数据目录中（默认是/var/lib/cassandra/data/）创建一个目录（cql_demo/users）用于存放该columnfamily的数据。由于目前并没有写入任务数据，所以目前users目录是空的。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/09/04/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%941-CQL%E7%9A%84%E6%89%A7%E8%A1%8C%E5%92%8C%E5%BB%BA%E8%A1%A8%E8%BF%87%E7%A8%8B/" data-id="ckzldzra90001tofw5e5qgmdx" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+    <a href="/2019/09/11/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-INSERT%E7%9A%84%E6%89%A7%E8%A1%8C-Memtable%E5%92%8CCommitLog/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Newer</strong>
+      <div class="article-nav-title">
+        
+          Cassandra源码阅读随笔2. INSERT的执行, Memtable和CommitLog
+        
+      </div>
+    </a>
+  
+  
+</nav>
+
+  
+</article>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tags</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/BookKeeper/" rel="tag">BookKeeper</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Parser-combinator/" rel="tag">Parser combinator</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Pulasr/" rel="tag">Pulasr</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tag Cloud</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/BookKeeper/" style="font-size: 10px;">BookKeeper</a> <a href="/tags/Cassandra/" style="font-size: 20px;">Cassandra</a> <a href="/tags/HBase/" style="font-size: 15px;">HBase</a> <a href="/tags/Parser-combinator/" style="font-size: 10px;">Parser combinator</a> <a href="/tags/Pulasr/" style="font-size: 10px;">Pulasr</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2020/03/">March 2020</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/12/">December 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/11/">November 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/10/">October 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/09/">September 2019</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/">Parser combinator初探1-简易JSON解析器</a>
+          </li>
+        
+          <li>
+            <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/">Cassandra笔记1-Compaction策略</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/">HBase源码阅读随笔2-MemStore</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]-Pulsar简要介绍</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]BookKeeper简要介绍</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2022 Bao Qingping<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+
+  
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+  </div>
+</body>
+</html>

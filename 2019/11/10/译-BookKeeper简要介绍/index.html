@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+
+  
+  <title>[译]BookKeeper简要介绍 | Baoqp&#39;s Blog</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="说明：以下内容从Reference中所述的博客翻译整理而来 Apache BookKeeper是可扩展、容错、低延迟的日志存储服务，针对实时负载进行了优化。 Bookeeper中的概念Records数据以一系列不可分割的记录（record）而不是字节数组的形式写入Apache BookKeeper中的日志。记录是BookKeeper中最小的I&#x2F;O单位，也是寻址单位。每条记录都有一个单调递增的序列号">
+<meta property="og:type" content="article">
+<meta property="og:title" content="[译]BookKeeper简要介绍">
+<meta property="og:url" content="http://example.com/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/index.html">
+<meta property="og:site_name" content="Baoqp&#39;s Blog">
+<meta property="og:description" content="说明：以下内容从Reference中所述的博客翻译整理而来 Apache BookKeeper是可扩展、容错、低延迟的日志存储服务，针对实时负载进行了优化。 Bookeeper中的概念Records数据以一系列不可分割的记录（record）而不是字节数组的形式写入Apache BookKeeper中的日志。记录是BookKeeper中最小的I&#x2F;O单位，也是寻址单位。每条记录都有一个单调递增的序列号">
+<meta property="og:locale">
+<meta property="og:image" content="http://example.com/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/image1.png">
+<meta property="og:image" content="http://example.com/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/image2.png">
+<meta property="og:image" content="http://example.com/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/image3.png">
+<meta property="og:image" content="http://example.com/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/image4.png">
+<meta property="og:image" content="http://example.com/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/image5.png">
+<meta property="og:image" content="http://example.com/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/image6.png">
+<meta property="og:image" content="http://example.com/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/image7.png">
+<meta property="article:published_time" content="2019-11-10T13:26:43.000Z">
+<meta property="article:modified_time" content="2019-11-10T13:31:40.024Z">
+<meta property="article:author" content="Bao Qingping">
+<meta property="article:tag" content="BookKeeper">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="http://example.com/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/image1.png">
+  
+    <link rel="alternate" href="/atom.xml" title="Baoqp&#39;s Blog" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.1"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">Baoqp&#39;s Blog</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://example.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main"><article id="post-译-BookKeeper简要介绍" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/" class="article-date">
+  <time datetime="2019-11-10T13:26:43.000Z" itemprop="datePublished">2019-11-10</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="article-title" itemprop="name">
+      [译]BookKeeper简要介绍
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <p><strong>说明：以下内容从Reference中所述的博客翻译整理而来</strong></p>
+<p>Apache BookKeeper是可扩展、容错、低延迟的日志存储服务，针对实时负载进行了优化。</p>
+<h2 id="Bookeeper中的概念"><a href="#Bookeeper中的概念" class="headerlink" title="Bookeeper中的概念"></a>Bookeeper中的概念</h2><h3 id="Records"><a href="#Records" class="headerlink" title="Records"></a>Records</h3><p>数据以一系列不可分割的记录（record）而不是字节数组的形式写入Apache BookKeeper中的日志。记录是BookKeeper中最小的I/O单位，也是寻址单位。每条记录都有一个单调递增的序列号。</p>
+<h3 id="Logs"><a href="#Logs" class="headerlink" title="Logs"></a>Logs</h3><p>BookKeeper提供了两种表示日志的存储原语：一种是ledger （log segment）；另一个是流（log stream）。基于此，BookKeeper对历史数据和实时数据提供了统一的存储抽象。<br>ledger是一系列记录，是BookKeeper中最底层的存储原语，可用于有界序列或无界流，ledger关闭后无法再次写入。<br><img src="image1.png"><br>图1. BookKeeper ledger：有界的数据序列</p>
+<p>流是无界的记录序列，默认不会终止。和ledger不同， 流可以被多次打开并写入。一个流实际上由多个ledger组成，根据基于时间或空间的滚动策略进行轮换。流主要的数据保留机制是截断，即根据基于时间或空间的保留策略丢弃最旧的ledger。<br><img src="image2.png"><br>图 2. BookKeeper stream: 无界的数据序列</p>
+<h3 id="Bookies"><a href="#Bookies" class="headerlink" title="Bookies"></a>Bookies</h3><p>BookKeeper中的存储节点称为bookie. 为了性能起见，各个bookie存储ledger的片段，而不是存储整个ledger，因此多个bookie作为一个整体对外提供服务。</p>
+<p><strong>Metadata</strong><br>BookKeeper使用zookeeper保存ledger和bookie的元数据。<br><img src="image3.png"><br>图3.BookKeeper典型安装配置</p>
+<h2 id="Replication"><a href="#Replication" class="headerlink" title="Replication"></a>Replication</h2><p>BookKeeper会把同一条记录复制到同一个数据中心（或多个数据中心）的多个节点上，通常是3个或5个。和其他系统所采用主副本或管道（pipeline）复制算法不同，BookKeeper采用并行quorum-vote复制算法，以保证可预测的低延迟。</p>
+<p><img src="image4.png"><br>图4. BookKeeper中的ensemble, write和ack quorums </p>
+<p>在上图中：</p>
+<ol>
+<li>BookKeeper集群中多个bookie节点（图中的bookie1~5）组成了一个ensemble来保存给定ledger的记录。</li>
+<li>ledger上的记录被划分到ensemble中的bookie。每条记录被保存到write quorum size参数所指定的多个节点中（图中的bookie2,3,4）。</li>
+<li>写入时，要等到接收到ack quorum size参数所指定的多个节点的确定，才认为写入成功（图中的节点3,4）。</li>
+<li>ensemble中的节点故障时，可以被其他正常的节点替换。<h3 id="Replication的核心思路"><a href="#Replication的核心思路" class="headerlink" title="Replication的核心思路"></a>Replication的核心思路</h3>BookKeeper中的复制基于以下基本思路：</li>
+<li>日志（流）是面向记录的而不是面向字节数组的。也就是说记录是数据的保存单位而不是字节数组。</li>
+<li>日志（流）中记录的顺序与记录副本的实际存储是分离的。</li>
+</ol>
+<p>这两个核心原则确保了BookKeeper复制能够提供以下特性：</p>
+<ul>
+<li>提供多种选项来将记录写到bookies中，这确保了即使集群中的许多bookies停机或运行缓慢，写入也能最终完成（只要有足够的容量来处理负载）。改变ensemble就可以做到这一点。</li>
+<li>通过增加ensemble大小来最大化单个日志（流）的带宽，以使单个日志不会局限于一台或一小组机器。这可以通过将ensemble大小配置为大于write quorum大​​小来实现。</li>
+<li>通过调整ack quorum大小来改善尾延迟。这对于确保BookKeeper的低延迟至关重要，同时仍提供一致性和持久性保证。</li>
+<li>通过多对多副本恢复提供快速复制。所有bookies都可以充当记录副本的发送者和接收者。</li>
+</ul>
+<h2 id="Durability"><a href="#Durability" class="headerlink" title="Durability"></a>Durability</h2><p>BookKeeper的持久性通过显式调用fsync和写入确认来实现。</p>
+<h2 id="Consistency"><a href="#Consistency" class="headerlink" title="Consistency"></a>Consistency</h2><p>BookKeeper提供了一个简单但强大的一致性保证——可重复读。<br>对于保存到日志中的数据：</p>
+<ul>
+<li>如果记录已经写入确认，则必定是立即可读的。</li>
+<li>如果一条记录已经被读取了一次，则必须始终可读。</li>
+<li>如果记录R成功写入，那么R及之前的记录都已成功持久化并可读。</li>
+<li>所有读取端看到的数据顺序都是一致的，并且重复读取也是一样的。</li>
+</ul>
+<p>BookKeeper的可重复读一致性是基于LastAddConfirmed (<strong>LAC</strong>) 协议完成的。</p>
+<h2 id="Availability"><a href="#Availability" class="headerlink" title="Availability"></a>Availability</h2><p>在CAP理论范畴中，BookKeeper是CP系统，但是仍然提供了很高的可用性。<br>I<br>|     <strong>可用性类型</strong>                 |    <strong>机制</strong>        |     <strong>描述</strong>            |<br>|———————-|—————–|——————————————————————————————————————-|<br>|<strong>Write availability</strong>|Ensemble changes |当bookie发生故障时，写入端将重新配置数据放置位置，这样可以确保只要集群中剩余的bookies总数足够，写入操作始终会成功。|<br>|<strong>Read availability</strong> |Speculative reads|允许读取端向ensemble中的任何节点读取数据，这有助于分散读取压力，减少尾延迟。                                       |</p>
+<h2 id="Low-latency"><a href="#Low-latency" class="headerlink" title="Low latency"></a>Low latency</h2><p>强持久性和一致性保证是分布式系统中的复杂问题，在还要满足企业级低延迟目标时尤为突出。BookKeeper通过一下方式来满足这些要求：</p>
+<ul>
+<li>在单个bookie上，不同工作负载（写入、尾读取和追赶/随机读）之间是有I/O隔离的。在journal（BookKeeper的事务日志）层级上使用 group-committing机制以平衡延迟和吞吐量。</li>
+<li>quorum-vote并行复制机制用于屏蔽网络故障、JVM垃圾回收暂停和慢速磁盘引起的延迟损耗。</li>
+<li>长轮询机制，可在写入确认后立即通知尾读取端。</li>
+</ul>
+<h2 id="I-O-isolation"><a href="#I-O-isolation" class="headerlink" title="I/O isolation"></a>I/O isolation</h2><p>在大多数消息传递系统中，慢速消费者会导致消息积压，从而可能导致总体性能下降。慢速消费者会迫使存储系统从持久性存储介质中读取数据，造成I/O抖动以及页缓存的换入换出。这源于/O组件对于写入、尾读取、追赶读取等共享同一个读写路径。BookKeeper中，对三种IO操作设计了3条不同的I/O路径。因为对于写入和尾读取要求可预测的低延迟；而对于追赶读取，吞吐量更重要。基于对这些工作负载之间的物理隔离，BookKeep可以充分利用：</p>
+<ul>
+<li>网络入口带宽和顺序写入时的磁盘写入带宽</li>
+<li>网络出口带宽和多个ledger磁盘用于读取的IOPS</li>
+</ul>
+<h2 id="Data-distribution"><a href="#Data-distribution" class="headerlink" title="Data distribution"></a>Data distribution</h2><p>构建在BookKeeper之上的服务把日志流作为分段的ledger保存在BookKeeper中，这些段可以复制到不同的bookie中。基于此获得了以下特性：</p>
+<ol>
+<li>存储容量不再受单个节点的存储容量所限制</li>
+<li>在扩展BookKeeper集群时不会发生日志流的重平衡，此外还提供了多样的放置策略，包括机架感知、区域感知和基于权重的选择等。</li>
+<li>节点故障时，缺失副本修复快速高效。</li>
+</ol>
+<p>与Kafka这种的以分区为中心的系统相比，BookKeeper的水平扩展性更具优势，在Kafka中，日志流（即Kafka分区）仅顺序存储在集群机器的子集上，并且扩展Kafka集群需要进行数据重新平衡，这是一个资源密集、容易出错且消耗很大的操作。此外，在以分区为中心的系统上，单个磁盘损坏将要求系统将整个日志流复制到新磁盘中，以满足复制要求。</p>
+<p><img src="image5.png"><br>图5. 日志流：所有日志段都复制到可配置数量（此处副本数为3）的的多个bookie中（此处为4）。日志段均匀分布以实现水平的可扩展性，且无需重平衡。</p>
+<h2 id="Scalability"><a href="#Scalability" class="headerlink" title="Scalability"></a>Scalability</h2><p>BookKeeper的扩展性在于以下几方面：</p>
+<h3 id="Number-of-ledgers-streams"><a href="#Number-of-ledgers-streams" class="headerlink" title="Number of ledgers/streams"></a>Number of ledgers/streams</h3><p>流可扩展性是指日志流存储能够支持大数量的流（从数百个到数百万个ledger和流），同时始终提供一致性能的特性。<br>实现这一目标的关键是存储格式。如果把ledger和流存储在专用文件中，将难以扩展，因为这些文件会定期从页缓存刷新到磁盘，从而I/O会分散在整个磁盘上。<br>BookKeeper以交错的存储格式将来自不同ledger和流的数据记录汇总以存储在大文件中，然后进行索引。这减少了文件数量和I/O竞争，使得BookKeeper可以扩展大量的ledger和流。</p>
+<h3 id="Number-of-bookies"><a href="#Number-of-bookies" class="headerlink" title="Number of bookies"></a>Number of bookies</h3><p>Bookie可扩展性是指通过增加更多的bookies以支持快速增长的流量的能力。在BookKeeper中，bookies之间是没有直接交互的，这使得只需添加新机器即可扩展群集。同样，基于BookKeeper在Bookies上分发数据的方式，在扩展群集时，没有高代价的、会大量占用网络和I/O带宽的分区数据重新平衡操作。</p>
+<h3 id="Number-of-clients"><a href="#Number-of-clients" class="headerlink" title="Number of clients"></a>Number of clients</h3><p>客户端可伸缩性是指日志流存储能够支持大量并发客户端，并支持大量扇出的能力。 BookKeeper基于多个方面实现此目的：</p>
+<ul>
+<li>客户端和服务端都是基于Netty实现的异步网络I/O.</li>
+<li>数据被复制到多个bookie, 客户端可以从任一副本节点读取。</li>
+<li>通过增加副本数量可以增加读取扇出能力。</li>
+</ul>
+<h3 id="Single-stream-throughput"><a href="#Single-stream-throughput" class="headerlink" title="Single stream throughput"></a>Single stream throughput</h3><p>除了通过增加流或者bookie的数量来增大吞吐量，BookKeeper中还可以通过增大ensemble的数量来提高单个流的吞吐量。</p>
+<h3 id="Operational-simplicity"><a href="#Operational-simplicity" class="headerlink" title="Operational simplicity"></a>Operational simplicity</h3><p>BookKeeper旨在简化操作复杂度。可以在系统运行时通过添加更多bookie节点来轻松扩容。如果Bookie节点不可用，则其中包含的所有记录都将标记为“待复制（under replicated）”，并且bookkeeper自动恢复守护程序会自动将数据从其他可用副本复制到新的bookies中。 BookKeeper可以将运行中的bookie节点上提供只读模式；在某些特定情况下，例如磁盘已满、磁盘损坏，bookie也会自动变为只读模式。只读模式下的Bookie将不再接受新的写操作，但仍然提供读取。这种自我修复的特性减少了许多操作上的痛点。</p>
+<h2 id="TOAB"><a href="#TOAB" class="headerlink" title="TOAB"></a>TOAB</h2><p>全序原子广播（Total Order Atomic Broadcast, TOAB）对于分布式系统来说是一个非常有用的特性。如果要构建一致性消息传递服务，则需要满足该特性。虽然不是严格要求，但实际上，如果希望在流处理系统中提供 effectively-once 或at-least-once语义，则TOAB也是必需的。</p>
+<p>具备TOAB的系统有以下特性：<br>|    <strong>Property</strong>                    |     <strong>Description</strong>                     |<br>|————————————|—————————————–|<br>|<strong>Validity</strong>           |If a correct participant broadcasts a message, then all correct participants will eventually deliver it.                                                                                                                    |<br>|<strong>Uniform Agreement</strong>  |If one correct participant delivers a message, then all correct participants will eventually deliver that message.                                                                                                          |<br>|<strong>Uniform Integrity</strong>  |A message is delivered by each participant at most once, and only if it was previously broadcast.                                                                                                                           |<br>|<strong>Uniform Total Order</strong>|The messages are totally ordered in the mathematical sense; that is, if any correct participant delivers message 1 first and message 2 second, then every other correct participant must deliver message 1 before message 2.|</p>
+<p>更简洁地说，TOAB 意味着：</p>
+<ul>
+<li>没有消息丢失</li>
+<li>没有重复</li>
+<li>没有重排序<br>众所周知，TOAB与分布式系统中的共识是等效的。</li>
+</ul>
+<p>有许多实现了TOAB的著名开源项目，比如ZooKeeper，etcd和Consul。但是，由于各种原因，这些实现无法扩展，因为它们只提供一个复制日志。向系统添加新节点只会增加广播一条消息所需的通信，也就是说是不可扩展的。</p>
+<h3 id="BookKeeper-TOAB实现原理"><a href="#BookKeeper-TOAB实现原理" class="headerlink" title="BookKeeper TOAB实现原理"></a>BookKeeper TOAB实现原理</h3><p>一个ledger只有一个可以添加记录的写入者。这样使得可以很容易就能提供Uniform Total Order 和Uniform Integrity，因为写入的时候每个记录都会分配一个ID.<br>提供Validity 和Uniform Agreement 特性则略显复杂。为了提供Validity，需要确保，如果一个记录已经确认写入，那么从ledger就能读取到该条目。Uniform Agreement 要求所有之后的读取程序都能看到完全相同的一组消息。</p>
+<p>当写入者正常运行时，提供这些特性是直白的。写入者知道哪些条目已被ack quorum确认，并将此信息作为显式消息或附加在后续记录上，发送给ensemble中的各个bookie。 此信息称为last add confirmed（LAC），类似于Zab或Raft中的提交阶段。ledger的读取者可以读取直到LAC的记录，同时bookKeeper向它们保证，它们读取到的任何记录最终都能被所有其他读取程序所读取。</p>
+<h3 id="Handling-write-crashes"><a href="#Handling-write-crashes" class="headerlink" title="Handling write crashes"></a>Handling write crashes</h3><p>当写入者发 生故障时事情变得复杂，写入的记录可能是以下情况：</p>
+<ol>
+<li>已经被ack quorum确认，但是还未作为LAC发送。</li>
+<li>已经被ack quorum确认，但是写入者没有接收到该确认消息</li>
+<li>少于ack quorum个bookie确认写入。</li>
+</ol>
+<p>问题是，在发生故障时这三种情况是无法区分出来的。在情况1中，为了提供Validity，必须保存所有的读取者都能读取到已确认的记录。在情况2和3中，为了提供Uniform Agreement，所有读取者需要对保留哪些记录达成一致。</p>
+<p>解决这些问题的方法是关闭ledger。当关闭一个ledger时，需要决定哪条记录是最后一条记录，并达成共识后写入该决定，之后该决定就一直保持不变。<br>多个读取者可能会同时尝试关闭ledger。每个读取者都使用恢复机制来找出ledger的最后一个条目。虽然不能保证每个读取者都从恢复机制中收到相同的最后一条记录（因为每个读取者连接的bookie不同），但是可以保证所有读取者至少会看到写入者所确认的最后一个条目。</p>
+<p>为了解决多个读取者从恢复机制读取到不同的结果，每个读取者需要把读取结果使用CAS方式写入zookeeper，只有一个写入能成功，写入失败的读取者读取成功写入的结果作为ledger正确的结尾记录。</p>
+<p><img src="image6.png"><br>图6. 两个读取者 <strong>R1</strong> 和<strong>R2</strong>，从ledger<strong>1</strong>恢复. <strong>R1</strong>可以看到记录3，但是<strong>R2</strong>不能，所以<strong>R1</strong>和<strong>R2</strong>恢复时会提出不同的最后记录。</p>
+<h3 id="Rounding-out-the-properties"><a href="#Rounding-out-the-properties" class="headerlink" title="Rounding out the properties"></a>Rounding out the properties</h3><p>我们还需要考虑到没有完美的故障检测器这一事实。这意味着读取者可能会在写入者还活着的时候尝试恢复并关闭ledger，这通常发生于写入者出现网络分区时。</p>
+<p>为了确保Validity，需要确保一旦读取者开始恢复一个ledger，那么写入者就不能再向该ledger加入记录。因为这之后加入的记录是保存到已确认的最后一条记录后面，没有读取者可以读取到这些记录。</p>
+<p>为解决此问题，BookKeeper在恢复开始时引入了防护（fencing）机制。系统会将fencing消息发送给ledger的write quorum中的每个bookie，告诉它们不再确认该ledger的任何新消息。一旦fencing消息在每个ack quorum被至少一个bookie确认，之后ack qurom就不会确认任何新写入的记录，从而写入者就无法确认写入任何新记录。</p>
+<p>Fencing和恢复机制提供了Validity特性，最后的CAS写入到ZooKeeper，设置了ledger最后记录的不可变性，提供了Uniform Agreement特性。从而TOAB要求的所有特性都满足了。</p>
+<h3 id="Multiple-ledgers"><a href="#Multiple-ledgers" class="headerlink" title="Multiple ledgers"></a>Multiple ledgers</h3><p>单单一个ledger的用处有限，因为它只有一个writer，如果该writer崩溃，就不能向ledger中添加任何其他内容。但是，要用作消息传递或状态机复制的复制日志，需要能够在崩溃后重新打开日志并重新开始添加新的日志条目，这通常是通过使用ZooKeeper完成的。下面将描述ApachePulsar是如何维护Topic消息日志的，但是这种方法其实是通用的，可以在其他应用程序中使用。但是我们建议使用DistributedLog，而不是自己去实现这个模式。DistributedLog是BookKeeper的高级客户端，封装了使用BookKeeper时的一些棘手的问题。</p>
+<h3 id="TOAB-at-work-Apache-Pulsar-topics"><a href="#TOAB-at-work-Apache-Pulsar-topics" class="headerlink" title="TOAB at work: Apache Pulsar topics"></a>TOAB at work: Apache Pulsar topics</h3><p>在Pulsar中，一个Topic的消息日志由一系列ledger组成。当一个Pulasr broker分配到一个topic，它从ZooKeeper读取该topic的ledger序列。在可以发布消息到该topic之前，需要保证最后一个ledger已经关闭了。然后，创建一个新ledger，并加入到该序列中，使用CAS向ZooKeeper中写入该ledger的序列号。<br><img src="image7.png"><br>图7. Pulsar topic中的消息日志，是一系列的ledger</p>
+<p>通过在ZooKeeper中存储ledger序列号，我们得到了序列号的TOAB保证。再加上ledger本身提供的TOAB保证，这意味着pulsar topic也具备了TOAB。由于DistributedLog使用了相同的模式，所以DistributedLog也可以提供TOAB。</p>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><p><a target="_blank" rel="noopener" href="https://streaml.io/blog/intro-to-bookkeeper">https://streaml.io/blog/intro-to-bookkeeper</a><br><a target="_blank" rel="noopener" href="https://streaml.io/blog/why-apache-bookkeeper">https://streaml.io/blog/why-apache-bookkeeper</a><br><a target="_blank" rel="noopener" href="https://streaml.io/blog/why-bookkeeper-part-2">https://streaml.io/blog/why-bookkeeper-part-2</a><br><a target="_blank" rel="noopener" href="https://streaml.io/blog/bookkeeper-toab">https://streaml.io/blog/bookkeeper-toab</a></p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/" data-id="ckzldzrav0011tofw6345398m" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/BookKeeper/" rel="tag">BookKeeper</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+    <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Newer</strong>
+      <div class="article-nav-title">
+        
+          [译]-Pulsar简要介绍
+        
+      </div>
+    </a>
+  
+  
+    <a href="/2019/11/02/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%941-RPC%E6%A1%86%E6%9E%B6/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Older</strong>
+      <div class="article-nav-title">HBase源码阅读随笔1-RPC框架</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tags</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/BookKeeper/" rel="tag">BookKeeper</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Parser-combinator/" rel="tag">Parser combinator</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Pulasr/" rel="tag">Pulasr</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tag Cloud</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/BookKeeper/" style="font-size: 10px;">BookKeeper</a> <a href="/tags/Cassandra/" style="font-size: 20px;">Cassandra</a> <a href="/tags/HBase/" style="font-size: 15px;">HBase</a> <a href="/tags/Parser-combinator/" style="font-size: 10px;">Parser combinator</a> <a href="/tags/Pulasr/" style="font-size: 10px;">Pulasr</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2020/03/">March 2020</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/12/">December 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/11/">November 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/10/">October 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/09/">September 2019</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/">Parser combinator初探1-简易JSON解析器</a>
+          </li>
+        
+          <li>
+            <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/">Cassandra笔记1-Compaction策略</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/">HBase源码阅读随笔2-MemStore</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]-Pulsar简要介绍</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]BookKeeper简要介绍</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2022 Bao Qingping<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+
+  
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+  </div>
+</body>
+</html>

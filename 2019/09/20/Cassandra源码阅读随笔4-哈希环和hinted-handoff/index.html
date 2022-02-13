@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+
+  
+  <title>Cassandra源码阅读随笔4. 哈希环和hinted handoff | Baoqp&#39;s Blog</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="哈希环和token在INSERT插入流程中提到，首先会根据数据的partition key确定要插入的节点。我们知道Cassandra使用一致性哈希把所有节点映射到一个哈希环上，然后根据partition key的哈希值来确定具体到哪个节点上。为了使得数据分布均匀，引入了虚拟节点（VirtualNode&#x2F;VNode）的概念，即一个物理节点对应哈希环上的多个点。Cassandra在启动的时候，如果本">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Cassandra源码阅读随笔4. 哈希环和hinted handoff">
+<meta property="og:url" content="http://example.com/2019/09/20/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%944-%E5%93%88%E5%B8%8C%E7%8E%AF%E5%92%8Chinted-handoff/index.html">
+<meta property="og:site_name" content="Baoqp&#39;s Blog">
+<meta property="og:description" content="哈希环和token在INSERT插入流程中提到，首先会根据数据的partition key确定要插入的节点。我们知道Cassandra使用一致性哈希把所有节点映射到一个哈希环上，然后根据partition key的哈希值来确定具体到哪个节点上。为了使得数据分布均匀，引入了虚拟节点（VirtualNode&#x2F;VNode）的概念，即一个物理节点对应哈希环上的多个点。Cassandra在启动的时候，如果本">
+<meta property="og:locale">
+<meta property="article:published_time" content="2019-09-20T09:14:42.000Z">
+<meta property="article:modified_time" content="2019-11-03T10:38:57.168Z">
+<meta property="article:author" content="Bao Qingping">
+<meta property="article:tag" content="Cassandra">
+<meta name="twitter:card" content="summary">
+  
+    <link rel="alternate" href="/atom.xml" title="Baoqp&#39;s Blog" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.1"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">Baoqp&#39;s Blog</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://example.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main"><article id="post-Cassandra源码阅读随笔4-哈希环和hinted-handoff" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/09/20/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%944-%E5%93%88%E5%B8%8C%E7%8E%AF%E5%92%8Chinted-handoff/" class="article-date">
+  <time datetime="2019-09-20T09:14:42.000Z" itemprop="datePublished">2019-09-20</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="article-title" itemprop="name">
+      Cassandra源码阅读随笔4. 哈希环和hinted handoff
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <h2 id="哈希环和token"><a href="#哈希环和token" class="headerlink" title="哈希环和token"></a>哈希环和token</h2><p>在INSERT插入流程中提到，首先会根据数据的partition key确定要插入的节点。我们知道Cassandra使用一致性哈希把所有节点映射到一个哈希环上，然后根据partition key的哈希值来确定具体到哪个节点上。为了使得数据分布均匀，引入了虚拟节点（VirtualNode/VNode）的概念，即一个物理节点对应哈希环上的多个点。Cassandra在启动的时候，如果本节点尚未分配有token（一个token表示一个虚拟节点），会掉哦给你BootStrapper的getRandomTokens()方法生成num_token个随机token，num_token默认是256，即默认一个物理节点会对应256个虚拟节点，可以看到这个数量还是挺大的，因为是采用的随机生成方法，只要生成的数量足够多，才可能分配均匀。</p>
+<p>集群中的节点会交换各自生成的token信息，这样就可以确定每个节点在哈希环上覆盖的范围。举个例子，假如现在有2个物理节点，每个节点对应3个虚拟节点，token范围为0-100，节点1生成的token分别为10,45,70，节点2生成的token分别为30,65,90，那么节点2负责的范围(10, 30],(45,65]和(70, 90]，其他范围由节点1负责。</p>
+<p>除了随机生成token，还可以使用官方提供的tokengentool来手动生成token。</p>
+<p>回头看插入过程中，获取目标节点的调用如下，StorageService的getNaturalEndpoints会调用AbstractReplicationStrategy类的同名方法，可以返回的并不只有一个节点，而是一个列表，因为根据复制策略和复制因子（replication factor），可以写入多个副本，比如复制因子为3，那么就要写入到3个节点中。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">// StorageProxy.performWrite()方法中</span><br><span class="line">List&lt;InetAddress&gt; naturalEndpoints = StorageService的.instance.getNaturalEndpoints(keyspaceName, tk);</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">// AbstractReplicationStrategy类</span><br><span class="line">public ArrayList&lt;InetAddress&gt; getNaturalEndpoints(RingPosition searchPosition) &#123;</span><br><span class="line">       Token searchToken = searchPosition.getToken();</span><br><span class="line">       // 找到 &gt;= searchToken的第一个token</span><br><span class="line">       Token keyToken = TokenMetadata.firstToken(tokenMetadata.sortedTokens(), searchToken);</span><br><span class="line">       // 是否有缓存的结果</span><br><span class="line">       ArrayList&lt;InetAddress&gt; endpoints = getCachedEndpoints(keyToken);</span><br><span class="line">       if (endpoints == null) &#123;</span><br><span class="line">           TokenMetadata tm = tokenMetadata.cachedOnlyTokenMap();</span><br><span class="line">           // 新的token加入会使得缓存失效</span><br><span class="line">           // if our cache got invalidated, it&#x27;s possible there is a new token to account for too</span><br><span class="line">           keyToken = TokenMetadata.firstToken(tm.sortedTokens(), searchToken);</span><br><span class="line">           // 根据复制策略和复制因子获取所有的目标节点</span><br><span class="line">           endpoints = new ArrayList&lt;&gt;(calculateNaturalEndpoints(searchToken, tm));</span><br><span class="line">           cachedEndpoints.put(keyToken, endpoints);</span><br><span class="line">       &#125;</span><br><span class="line"></span><br><span class="line">       return new ArrayList&lt;&gt;(endpoints);</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+<p>除了根据token找到的节点，看下其他副本的节点是如何查找的，calculateNaturalEndpoints是一个抽象方法，由AbstractReplicationStrategy的子类实现。看下默认使用的复制策略SimpleStrategy的calculateNaturalEndpoints()方法，实现比较简单，就是根据复制因子在哈希环上找到大于等于要查找token的多个token，然后获取其对应的节点。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">public List&lt;InetAddress&gt; calculateNaturalEndpoints(Token token, TokenMetadata metadata) &#123;</span><br><span class="line">       int replicas = getReplicationFactor();</span><br><span class="line">       ArrayList&lt;Token&gt; tokens = metadata.sortedTokens();</span><br><span class="line">       List&lt;InetAddress&gt; endpoints = new ArrayList&lt;&gt;(replicas);</span><br><span class="line"></span><br><span class="line">       if (tokens.isEmpty())</span><br><span class="line">           return endpoints;</span><br><span class="line"></span><br><span class="line">       // Add the token at the index by default</span><br><span class="line">       Iterator&lt;Token&gt; iter = TokenMetadata.ringIterator(tokens, token, false);</span><br><span class="line">       while (endpoints.size() &lt; replicas &amp;&amp; iter.hasNext()) &#123;</span><br><span class="line">           InetAddress ep = metadata.getEndpoint(iter.next());</span><br><span class="line">           if (!endpoints.contains(ep))</span><br><span class="line">               endpoints.add(ep);</span><br><span class="line">       &#125;</span><br><span class="line">       return endpoints;</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+<p>在生成环境中，推荐使用另外一种复制策略NetworkTopologyStrategy，该策略可以配置在每个数据中心的副本数。其calculateNaturalEndpoints()方法的主要逻辑如下，可以看到在同一个数据中心，首先选择不同的机架上的节点，如果所有机架都遍历完还是不够副本数，再从已经遍历的机架上再次选择其他节点。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br></pre></td><td class="code"><pre><span class="line">public List&lt;InetAddress&gt; calculateNaturalEndpoints(Token searchToken, TokenMetadata tokenMetadata) &#123;</span><br><span class="line">       // we want to preserve insertion order so that the first added endpoint becomes primary</span><br><span class="line">       Set&lt;InetAddress&gt; replicas = new LinkedHashSet&lt;&gt;();</span><br><span class="line">       // replicas we have found in each DC</span><br><span class="line">       Map&lt;String, Set&lt;InetAddress&gt;&gt; dcReplicas = new HashMap&lt;String, Set&lt;InetAddress&gt;&gt;(datacenters.size()) &#123;&#123;</span><br><span class="line">           for (Map.Entry&lt;String, Integer&gt; dc : datacenters.entrySet())</span><br><span class="line">               put(dc.getKey(), new HashSet&lt;&gt;(dc.getValue()));</span><br><span class="line">       &#125;&#125;;</span><br><span class="line">       </span><br><span class="line">       ......</span><br><span class="line"></span><br><span class="line">       Iterator&lt;Token&gt; tokenIter = TokenMetadata.ringIterator(tokenMetadata.sortedTokens(), searchToken, false);</span><br><span class="line">       while (tokenIter.hasNext() &amp;&amp; !hasSufficientReplicas(dcReplicas, allEndpoints)) &#123;</span><br><span class="line">           Token next = tokenIter.next();</span><br><span class="line">           InetAddress ep = tokenMetadata.getEndpoint(next);</span><br><span class="line">           String dc = snitch.getDatacenter(ep);</span><br><span class="line">           // have we already found all replicas for this dc? 是否有足够的数量</span><br><span class="line">           if (!datacenters.containsKey(dc) || hasSufficientReplicas(dc, dcReplicas, allEndpoints))</span><br><span class="line">               continue;</span><br><span class="line">           // can we skip checking the rack?</span><br><span class="line">           if (seenRacks.get(dc).size() == racks.get(dc).keySet().size()) &#123;</span><br><span class="line">               dcReplicas.get(dc).add(ep);</span><br><span class="line">               replicas.add(ep);</span><br><span class="line">           &#125; else &#123;</span><br><span class="line">               String rack = snitch.getRack(ep);</span><br><span class="line">               // is this a new rack?</span><br><span class="line">               if (seenRacks.get(dc).contains(rack)) &#123; // 该机架已经分配过，先跳过</span><br><span class="line">                   skippedDcEndpoints.get(dc).add(ep);</span><br><span class="line">               &#125; else &#123;</span><br><span class="line">                   dcReplicas.get(dc).add(ep);</span><br><span class="line">                   replicas.add(ep);</span><br><span class="line">                   seenRacks.get(dc).add(rack);</span><br><span class="line">                   // if we&#x27;ve run out of distinct racks, add the hosts we skipped past already (up to RF)</span><br><span class="line">                   if (seenRacks.get(dc).size() == racks.get(dc).keySet().size()) &#123; // 所有机架都已经看过</span><br><span class="line">                       Iterator&lt;InetAddress&gt; skippedIt = skippedDcEndpoints.get(dc).iterator();</span><br><span class="line">                       // 如果还不够副本数，则再从已经分配过的机架上再次分配</span><br><span class="line">                       while (skippedIt.hasNext() &amp;&amp; !hasSufficientReplicas(dc, dcReplicas, allEndpoints)) &#123;</span><br><span class="line">                           InetAddress nextSkipped = skippedIt.next();</span><br><span class="line">                           dcReplicas.get(dc).add(nextSkipped);</span><br><span class="line">                           replicas.add(nextSkipped); // replicas是set，因此跳过是不是同一个节点的判断</span><br><span class="line">                       &#125;</span><br><span class="line">                   &#125;</span><br><span class="line">               &#125;</span><br><span class="line">           &#125;</span><br><span class="line">       &#125;</span><br><span class="line"></span><br><span class="line">       return new ArrayList&lt;&gt;(replicas);</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="hintted-handoff"><a href="#hintted-handoff" class="headerlink" title="hintted handoff"></a>hintted handoff</h2><p>在实际环境中，可能由于网络分区、硬件故障等导致写入所属的节点无法访问。为了确保可用性，Cassandra引入了一种称为hinted handoff特性，即当要写入的节点A发生故障时，协调者会创建一个保存写入相关信息的hint，并把该hint保存到其他可用的节点B上，当节点A重新上线后，节点B会把hint发送给节点A。Cassandra为每个分区都提供了可供写入的hint<sup>1</sup>。</p>
+<p>在写入过程的sendToHintedEndpoints()方法中，如果某个目标节点被诊断为故障，那么可能会使用hintted handoff。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">if (!shouldHint(destination))</span><br><span class="line">		continue;</span><br><span class="line"></span><br><span class="line">   // Schedule a local hint</span><br><span class="line">   submitHint(rm, destination, responseHandler);</span><br></pre></td></tr></table></figure>
+<p>在shouldHint中，一个比较重要的判断是<code>boolean hintWindowExpired = Gossiper.instance.getEndpointDowntime(ep) &gt; DatabaseDescriptor.getMaxHintWindow();</code>即机器故障时间要小于配置的max_hint_window_in_ms，否则不会使用hint。</p>
+<p>submitHint向HintedHandOffManager提交一个Runaable，其中的writeHintForMutation()方法又调用了HintedHandOffManager的hintFor()方法，该方法中把该要更新的记录序列化为二进制数据，然后作为值构成一条系统空间中hints表的记录[TODO没有看到该记录的写入调用???]。该记录需要设置TTL，其值为mutation中各个columnfamily的gcGraceSeconds的最小值，这是为了防止对记录的删除被之后恢复hint时覆盖。比如一个节点短暂下线了，下线期间保存了一条对记录A的hint在其他节点，该节点下线后马上恢复，之后有个删除记录A的请求，并且在gcGraceSeconds之后，删除记录A的tombstone被清理，如果恢复记录A的hint，那么记录A就“死而复生”了。如果把TTL设置为小于gcGraceSeconds就不会有这个问题。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br></pre></td><td class="code"><pre><span class="line">public static Future&lt;Void&gt; submitHint(final RowMutation mutation,</span><br><span class="line">                                      final InetAddress target,</span><br><span class="line">                                      final AbstractWriteResponseHandler responseHandler) &#123;</span><br><span class="line">    // local write that time out should be handled by LocalMutationRunnable</span><br><span class="line">    assert !target.equals(FBUtilities.getBroadcastAddress()) : target;</span><br><span class="line"></span><br><span class="line">    HintRunnable runnable = new HintRunnable(target) &#123;</span><br><span class="line">        public void runMayThrow() &#123;</span><br><span class="line">            int ttl = HintedHandOffManager.calculateHintTTL(mutation);</span><br><span class="line">            if (ttl &gt; 0) &#123;</span><br><span class="line">                logger.debug(&quot;Adding hint for &#123;&#125;&quot;, target);</span><br><span class="line">                writeHintForMutation(mutation, System.currentTimeMillis(), ttl, target);</span><br><span class="line">                // Notify the handler only for CL == ANY</span><br><span class="line">                if (responseHandler != null &amp;&amp; responseHandler.consistencyLevel == ConsistencyLevel.ANY)</span><br><span class="line">                    responseHandler.response(null);</span><br><span class="line">            &#125; else &#123;</span><br><span class="line">                logger.debug(&quot;Skipped writing hint for &#123;&#125; (ttl &#123;&#125;)&quot;, target, ttl);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;;</span><br><span class="line"></span><br><span class="line">    return submitHint(runnable);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">// HintedHandOffManager</span><br><span class="line">public RowMutation hintFor(RowMutation mutation, long now, int ttl, UUID targetId) &#123;</span><br><span class="line">    assert ttl &gt; 0;</span><br><span class="line"></span><br><span class="line">    InetAddress endpoint = StorageService.instance.getTokenMetadata().getEndpointForHostId(targetId);</span><br><span class="line">    // during tests we may not have a matching endpoint, but this would be unexpected in real clusters</span><br><span class="line">    if (endpoint != null)</span><br><span class="line">        metrics.incrCreatedHints(endpoint);</span><br><span class="line">    else</span><br><span class="line">        logger.warn(&quot;Unable to find matching endpoint for target &#123;&#125; when storing a hint&quot;, targetId);</span><br><span class="line"></span><br><span class="line">    UUID hintId = UUIDGen.getTimeUUID();</span><br><span class="line">    // serialize the hint with id and version as a composite column name</span><br><span class="line">    ByteBuffer name = comparator.decompose(hintId, MessagingService.current_version);</span><br><span class="line">    ByteBuffer value = ByteBuffer.wrap(FBUtilities.serialize(mutation, RowMutation.serializer, MessagingService.current_version));</span><br><span class="line">    ColumnFamily cf = ArrayBackedSortedColumns.factory.create(Schema.instance.getCFMetaData(Keyspace.SYSTEM_KS, SystemKeyspace.HINTS_CF));</span><br><span class="line">    cf.addColumn(name, value, now, ttl);</span><br><span class="line">    return new RowMutation(Keyspace.SYSTEM_KS, UUIDType.instance.decompose(targetId), cf);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>系统启动的时候会调用HintedHandOffManager的start()方法来启动一个每10分钟执行的任务scheduleAllDeliveries，实际的hint读取和发送在doDeliverHintsToEndpoint()方法中，在发送的时候为了避免占用太多带宽，需要进行限流。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line">private void scheduleAllDeliveries() &#123;</span><br><span class="line">    // 在发送hints之前，对hints表执行合并操作来避免发送tombstone和过期的hints。</span><br><span class="line">    compact();</span><br><span class="line"></span><br><span class="line">    IPartitioner p = StorageService.getPartitioner();</span><br><span class="line">    RowPosition minPos = p.getMinimumToken().minKeyBound();</span><br><span class="line">    Range&lt;RowPosition&gt; range = new Range&lt;&gt;(minPos, minPos, p);</span><br><span class="line">    IDiskAtomFilter filter = new NamesQueryFilter(ImmutableSortedSet.of());</span><br><span class="line">    // 获取所有数据</span><br><span class="line">    List&lt;Row&gt; rows = hintStore.getRangeSlice(range, null, filter, Integer.MAX_VALUE, System.currentTimeMillis());</span><br><span class="line">    for (Row row : rows) &#123;</span><br><span class="line">        UUID hostId = UUIDGen.getUUID(row.key.key);</span><br><span class="line">        InetAddress target = StorageService.instance.getTokenMetadata().getEndpointForHostId(hostId);</span><br><span class="line">        // token may have since been removed (in which case we have just read back a tombstone)</span><br><span class="line">        if (target != null)</span><br><span class="line">            scheduleHintDelivery(target, false);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    logger.debug(&quot;Finished scheduleAllDeliveries&quot;);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>在前文提到，hinted handoff可以确保可用性，实际上这个和一致性级别（ConsistencyLevel）有关。从sendToHintedEndpoints()的方法注释可以发现，只有一致性级别设置为非ANY时，hinted handoff并不会参与到一致性级别的计数中，如果没有足够的节点满足写的一致性级别需要，会抛出UnavailableException<sup>1</sup>。</p>
+<table>
+<thead>
+<tr>
+<th>Hinted Handoff</th>
+<th>Consist.Level</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>on</td>
+<td>&gt;=1</td>
+<td>wait for hints. We DO NOT notify the handler with handler.response() for hints</td>
+</tr>
+<tr>
+<td>on</td>
+<td>ANY</td>
+<td>wait for hints. Responses count towards consistency</td>
+</tr>
+<tr>
+<td>off</td>
+<td>&gt;=1</td>
+<td>DO NOT fire hints. And DO NOT wait for them to complete</td>
+</tr>
+</tbody></table>
+<p>reference </p>
+<ol>
+<li>Cassandra权威指南</li>
+<li><a target="_blank" rel="noopener" href="https://www.cnblogs.com/sing1ee/archive/2012/07/09/2765056.html">https://www.cnblogs.com/sing1ee/archive/2012/07/09/2765056.html</a></li>
+</ol>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/09/20/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%944-%E5%93%88%E5%B8%8C%E7%8E%AF%E5%92%8Chinted-handoff/" data-id="ckzldzrac0003tofw30us7ry0" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+    <a href="/2019/09/23/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%945-SELECT%E6%93%8D%E4%BD%9C/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Newer</strong>
+      <div class="article-nav-title">
+        
+          Cassandra源码阅读随笔5. SELECT操作
+        
+      </div>
+    </a>
+  
+  
+    <a href="/2019/09/15/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%943-SSTable%E7%9A%84%E5%86%99%E5%85%A5/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Older</strong>
+      <div class="article-nav-title">Cassandra源码阅读随笔3. SSTable的写入</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tags</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/BookKeeper/" rel="tag">BookKeeper</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Parser-combinator/" rel="tag">Parser combinator</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Pulasr/" rel="tag">Pulasr</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tag Cloud</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/BookKeeper/" style="font-size: 10px;">BookKeeper</a> <a href="/tags/Cassandra/" style="font-size: 20px;">Cassandra</a> <a href="/tags/HBase/" style="font-size: 15px;">HBase</a> <a href="/tags/Parser-combinator/" style="font-size: 10px;">Parser combinator</a> <a href="/tags/Pulasr/" style="font-size: 10px;">Pulasr</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2020/03/">March 2020</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/12/">December 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/11/">November 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/10/">October 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/09/">September 2019</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/">Parser combinator初探1-简易JSON解析器</a>
+          </li>
+        
+          <li>
+            <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/">Cassandra笔记1-Compaction策略</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/">HBase源码阅读随笔2-MemStore</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]-Pulsar简要介绍</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]BookKeeper简要介绍</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2022 Bao Qingping<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+
+  
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+  </div>
+</body>
+</html>

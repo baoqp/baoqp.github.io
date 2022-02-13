@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+
+  
+  <title>Cassandra笔记1-Compaction策略 | Baoqp&#39;s Blog</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="以下内容来自于最后的Reference中几篇文章的翻译和总结   Leveled CompactionLeveled Compaction的一个可用于判断它是否适合使用的基本特征是：在压缩时，Leveled Compaction会消耗更多的I&#x2F;O，以确保一行数据最多分布在若干个SSTable中，而这个最大值就是层数；相较而言，size-tiered compaction无法提供这种保证。 当使用">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Cassandra笔记1-Compaction策略">
+<meta property="og:url" content="http://example.com/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/index.html">
+<meta property="og:site_name" content="Baoqp&#39;s Blog">
+<meta property="og:description" content="以下内容来自于最后的Reference中几篇文章的翻译和总结   Leveled CompactionLeveled Compaction的一个可用于判断它是否适合使用的基本特征是：在压缩时，Leveled Compaction会消耗更多的I&#x2F;O，以确保一行数据最多分布在若干个SSTable中，而这个最大值就是层数；相较而言，size-tiered compaction无法提供这种保证。 当使用">
+<meta property="og:locale">
+<meta property="og:image" content="http://example.com/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/image1.png">
+<meta property="og:image" content="http://example.com/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/image2.png">
+<meta property="og:image" content="http://example.com/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/image3.png">
+<meta property="article:published_time" content="2019-12-28T14:09:43.000Z">
+<meta property="article:modified_time" content="2020-01-13T14:58:10.250Z">
+<meta property="article:author" content="Bao Qingping">
+<meta property="article:tag" content="Cassandra">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="http://example.com/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/image1.png">
+  
+    <link rel="alternate" href="/atom.xml" title="Baoqp&#39;s Blog" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.1"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">Baoqp&#39;s Blog</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://example.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main"><article id="post-Cassandra笔记1-Compaction策略" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/" class="article-date">
+  <time datetime="2019-12-28T14:09:43.000Z" itemprop="datePublished">2019-12-28</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="article-title" itemprop="name">
+      Cassandra笔记1-Compaction策略
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <blockquote>
+<p>以下内容来自于最后的Reference中几篇文章的翻译和总结 </p>
+</blockquote>
+<h2 id="Leveled-Compaction"><a href="#Leveled-Compaction" class="headerlink" title="Leveled Compaction"></a>Leveled Compaction</h2><p>Leveled Compaction的一个可用于判断它是否适合使用的基本特征是：在压缩时，Leveled Compaction会消耗更多的I/O，以确保一行数据最多分布在若干个SSTable中，而这个最大值就是层数；相较而言，size-tiered compaction无法提供这种保证。</p>
+<p>当使用Leveled Compaction，90%的读取只需要读取一个sstable，因此该策略适合使用的场景如下：</p>
+<ul>
+<li>对读取延迟的比较敏感</li>
+<li>高读/写比例</li>
+<li>数据更新频繁</li>
+<li>在宽表中使用删除或TTL列</li>
+</ul>
+<p>而不适合使用Leveled Compaction的场景为：</p>
+<ul>
+<li>磁盘IO压力过大，不足以支撑level  compaction的IO要求</li>
+<li>大量的写入负载</li>
+<li>数据只写入一次</li>
+</ul>
+<h2 id="DateTieredCompactionStrategy"><a href="#DateTieredCompactionStrategy" class="headerlink" title="DateTieredCompactionStrategy"></a>DateTieredCompactionStrategy</h2><p>C*的一个常用场景是存储时间序列数据。clustering key通常会和时间戳相关联，数据写入的速率也近乎是恒定的，数据写入的顺序和时间先后基本保持一致，只在小范围内（通常是几秒）和时间先后不一致。时间序列数据的查询通常都是针对给定分区的范围查询，类似于“过去一小时/天/周的数据”。</p>
+<p>每个sstable的元数据中都保存了sstable的最大和最小的clustering key，对于范围查询，可以根据这两个key快速过滤出不在范围内的sstable，这样可以提高效率。但是STCS和LCS并没有关注这一点儿，因此每个sstable的key范围可能都很宽。下图是使用STCS策略对连续写入的时间序列数据压缩后生成的sstable示意图。图中每个矩形表示一个sstable（共11个），矩形左右边表示其中key的最早和最晚写入时间，矩形面积为数据量大小。此时我们要访问某个时间范围的数据，如下图中的纵向的浅色矩形，可以看到需要对每个sstable都进行访问。<br><img src="image1.png"></p>
+<p>如果使用Date-Tiered Compaction Strategy (DTCS)，那么同样数据生成的sstable可能就是如下图所示，总共20个sstable随着时间线分布。sstable的数量和base_time_seconds 参数的设置有关，该参数越小，产生的sstable数量越多。当使用和前面相同的范围查询时，只访问了3个sstable。使用DTCS时的一个问题是对于最近一小时的查询比更早的某一个小时的查询的效率更低。<br><img src="image2.png"></p>
+<p>DTCS的原理和STCS的类似，但是不是基于sstable的尺寸，而是基于sstable的 “年龄”。年龄的计算方式是全局最大时间戳减去SSTable的最小时间戳 。根据年龄把sstable分组到不同的时间窗口内，同一个时间窗口内的进行合并，这样新旧数据就不会混合在一起。窗口大小是可以设置的，base_time_seconds 参数设置初始窗口为1小时（默认），即过去一小时内写入的数据在第一个窗口内。随着时间的推移老窗口会越来越大，直到max_sstable_age_days ，此后不会再参与合并。<br><img src="image3.png"><br>如上图所示，时间窗口随着时间的推移而移动，sstable根据最老数据的年龄排序（最小的时间戳）。在1中没有一个窗口含有4个及以上（由参数 min_threshold配置）的sstable，因此不会合并。随着时间的推移，进入状态2，其中某个时间窗口有4个sstable，那么就对该窗口内的sstable进行合并。在状态3中又有一个时间窗口内有4个sstable可以进行合并。</p>
+<p>显然DTCS适合于存储时间序列数据，它也是为此设计的。对于写入速率稳定的场景也可以考虑使用该策略。如果写入数据自行指定时间戳，而这个时间戳是高度无需的，或者和数据实际写入磁盘的时间相差很大的，那么就不适合使用DTCS.</p>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><p><a target="_blank" rel="noopener" href="https://www.datastax.com/blog/2011/10/when-use-leveled-compaction">When to Use Leveled Compaction</a><br><a target="_blank" rel="noopener" href="https://labs.spotify.com/2014/12/18/date-tiered-compaction/">Date-Tiered Compaction in Apache Cassandra</a><br><a target="_blank" rel="noopener" href="https://www.datastax.com/blog/2014/11/datetieredcompactionstrategy-compaction-time-series-data">DateTieredCompactionStrategy: Compaction for Time Series Data</a></p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/" data-id="ckzldzrai000btofwd8tud508" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+    <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Newer</strong>
+      <div class="article-nav-title">
+        
+          Parser combinator初探1-简易JSON解析器
+        
+      </div>
+    </a>
+  
+  
+    <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Older</strong>
+      <div class="article-nav-title">HBase源码阅读随笔2-MemStore</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tags</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/BookKeeper/" rel="tag">BookKeeper</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Parser-combinator/" rel="tag">Parser combinator</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Pulasr/" rel="tag">Pulasr</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tag Cloud</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/BookKeeper/" style="font-size: 10px;">BookKeeper</a> <a href="/tags/Cassandra/" style="font-size: 20px;">Cassandra</a> <a href="/tags/HBase/" style="font-size: 15px;">HBase</a> <a href="/tags/Parser-combinator/" style="font-size: 10px;">Parser combinator</a> <a href="/tags/Pulasr/" style="font-size: 10px;">Pulasr</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2020/03/">March 2020</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/12/">December 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/11/">November 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/10/">October 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/09/">September 2019</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/">Parser combinator初探1-简易JSON解析器</a>
+          </li>
+        
+          <li>
+            <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/">Cassandra笔记1-Compaction策略</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/">HBase源码阅读随笔2-MemStore</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]-Pulsar简要介绍</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]BookKeeper简要介绍</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2022 Bao Qingping<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+
+  
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+  </div>
+</body>
+</html>

@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+
+  
+  <title>Cassandra源码阅读随笔8. Gossip协议和故障检测 | Baoqp&#39;s Blog</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="Cassandra集群中各节点通过Gossip协议交换信息，也据此判断节点状态以完成成员管理。Gossip协议是一种去中心化的广播协议， 工作流程类似于流行病的传播，可以证明仅需 O(log(n)) 个回合，信息就可以传递到所有节点1。 Gossip协议的实现在org.apache.cassandra.gms包中，最主要的类是Gossiper，在该类的注释中已经解释了Gossiper的大致工作流程">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Cassandra源码阅读随笔8. Gossip协议和故障检测">
+<meta property="og:url" content="http://example.com/2019/10/16/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%948-Gossip%E5%8D%8F%E8%AE%AE%E5%92%8C%E6%95%85%E9%9A%9C%E6%A3%80%E6%B5%8B/index.html">
+<meta property="og:site_name" content="Baoqp&#39;s Blog">
+<meta property="og:description" content="Cassandra集群中各节点通过Gossip协议交换信息，也据此判断节点状态以完成成员管理。Gossip协议是一种去中心化的广播协议， 工作流程类似于流行病的传播，可以证明仅需 O(log(n)) 个回合，信息就可以传递到所有节点1。 Gossip协议的实现在org.apache.cassandra.gms包中，最主要的类是Gossiper，在该类的注释中已经解释了Gossiper的大致工作流程">
+<meta property="og:locale">
+<meta property="article:published_time" content="2019-10-16T10:17:33.000Z">
+<meta property="article:modified_time" content="2019-11-03T10:53:48.147Z">
+<meta property="article:author" content="Bao Qingping">
+<meta property="article:tag" content="Cassandra">
+<meta name="twitter:card" content="summary">
+  
+    <link rel="alternate" href="/atom.xml" title="Baoqp&#39;s Blog" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.1"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">Baoqp&#39;s Blog</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://example.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main"><article id="post-Cassandra源码阅读随笔8-Gossip协议和故障检测" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/10/16/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%948-Gossip%E5%8D%8F%E8%AE%AE%E5%92%8C%E6%95%85%E9%9A%9C%E6%A3%80%E6%B5%8B/" class="article-date">
+  <time datetime="2019-10-16T10:17:33.000Z" itemprop="datePublished">2019-10-16</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="article-title" itemprop="name">
+      Cassandra源码阅读随笔8. Gossip协议和故障检测
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <p>Cassandra集群中各节点通过Gossip协议交换信息，也据此判断节点状态以完成成员管理。Gossip协议是一种去中心化的广播协议， 工作流程类似于流行病的传播，可以证明仅需 <em>O(log(n))</em> 个回合，信息就可以传递到所有节点<sup>1</sup>。</p>
+<p>Gossip协议的实现在org.apache.cassandra.gms包中，最主要的类是Gossiper，在该类的注释中已经解释了Gossiper的大致工作流程：</p>
+<blockquote>
+<p>此模块负责对本结点的消息进行gossip形式的传递。该实现中维护了存活节点和死亡节点的列表。该模块会周期性地，比如每隔1秒，随机选择一个节点开始gossip协议流程。gossip协议流程包含3次消息交换。比如现在节点A向节点B启动一轮gossip协议，节点A向节点B发送一个GossipDigestSynMessage消息。节点B收到消息后，回复一个GossipDigestAckMessage确认消息。节点A收到节点B的确认消息后，再向节点B发送一个GossipDigestAck2Message来结束此次的gossip流程。该模块在收到以上三种消息的任一种时，就会更新故障检测器（Failure Detector）中的节点活性（liveness）信息。当接收到一个GossipShutdownMessage消息时，该模块会立即在故障检测器中把对应节点的状态设置为下线。</p>
+</blockquote>
+<p>从上面说明中可以发现，一轮gossip协议过程类似于TCP的三次握手。</p>
+<h2 id="节点启动加入哈希环的过程"><a href="#节点启动加入哈希环的过程" class="headerlink" title="节点启动加入哈希环的过程"></a>节点启动加入哈希环的过程</h2><p>在Cassandra的启动过程中会调用StorageService的initServer()方法，该方法又会调用prepareToJoin()方法，该方法中会调用Gossiper类的start()方法来启动Gossiper单例，主要是初始化自身的状态信息和启动了一个定时为1秒的定时任务GossipTask。如果启动的节点不是种子节点，则还会先调用checkForEndpointCollision()方法检查是否有地址冲突，该方法中会启动一轮”shadow” gossip，向所有种子节点发送不携带节点信息的GossipDigestSyn消息，然后从种子节点ACK消息中获取到当前集群中的节点信息，判断是否已经有和本节点相同地址的其他节点，若有则抛异常。在checkForEndpointCollision()方法的最后会清除所有获取的节点状态信息。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line">private void prepareToJoin() throws ConfigurationException &#123;</span><br><span class="line">     if (!joined) &#123;</span><br><span class="line">         Map&lt;ApplicationState, VersionedValue&gt; appStates = new HashMap&lt;&gt;();</span><br><span class="line"></span><br><span class="line">         if  &#123;</span><br><span class="line">             ......</span><br><span class="line">         &#125; else if (shouldBootstrap()) &#123;</span><br><span class="line">             checkForEndpointCollision(); // 检查地址冲突</span><br><span class="line">         &#125;</span><br><span class="line">         </span><br><span class="line">         ......</span><br><span class="line"></span><br><span class="line">         Gossiper.instance.register(this);</span><br><span class="line">         Gossiper.instance.start(SystemKeyspace.incrementAndGetGeneration(), appStates); // 启动Gossiper</span><br><span class="line">         // gossip snitch infos (local DC and rack)</span><br><span class="line">         gossipSnitchInfo();</span><br><span class="line">         // gossip Schema.emptyVersion forcing immediate check for schema updates (see MigrationManager#maybeScheduleSchemaPull)</span><br><span class="line">         Schema.instance.updateVersionAndAnnounce(); // Ensure we know our own actual Schema UUID in preparation for updates</span><br><span class="line"></span><br><span class="line">         if (!MessagingService.instance().isListening())</span><br><span class="line">             MessagingService.instance().listen(FBUtilities.getLocalAddress());</span><br><span class="line">         LoadBroadcaster.instance.startBroadcasting();</span><br><span class="line"></span><br><span class="line">         HintedHandOffManager.instance.start();</span><br><span class="line">         BatchlogManager.instance.start();</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
+<p>之后，会进入joinTokenRing()方法，顾名思义，此方法中会把正在启动的节点加入到哈希环中，主要步骤如下：</p>
+<ol>
+<li>在system.local中写入正在启动对应的状态BootstrapState.IN_PROGRESS</li>
+<li>生成初始的num_tokens（默认为256）个随机token</li>
+<li>向本节点的状态信息中加入STATUS和TOKEN对应的信息，并回调相关订阅者。其中STATUS信息的添加会触发StorageService中的回调方法，并进入handleStateBootstrap()方法中。该方法会把产生的token放入TokenMetadata的bootstrapTokens中，在放入前还会检测是否有token冲突。之后向PendingRangeCalculatorService提交一个更新token range的任务。</li>
+<li>实例化Bootstrapper对象，并调用其bootstrap()方法，该方法主要是为了向其他节点拉取分配到本节点上的数据，具体步骤如下：<ul>
+<li>计算节点生成的token对应的pending range</li>
+<li>对一个pending range计算落在当前哪个range内（因为是节点加入，所以pending range肯定在原来各个节点的某些range内部），并记录对应的节点</li>
+<li>向各个节点请求对应的pending range的数据以保存为本地的sstable文件，该过程会同步等待直到完成。[TODO数据的拉取streaming包的说明]</li>
+</ul>
+</li>
+<li>把生成的token保存到system.local中，更新tokenMetadata中的数据。更新本节点的应用状态，主要是应用的状态改为NORMAL，并进入StorageService的回调的具体的处理方法handleStateNormal()。<ul>
+<li>把部分应用状态保存到system.peers中</li>
+<li>更新tokenMetadata（前面已经执行过，但是该方法会在不同的地方回调，比如其他节点接收到本节点的Normal状态更新的消息也会回调该方法，并把本节点的token值保存到它的本地）</li>
+<li>处理要移除的节点（要移除的节点是没有分配任务token的节点，比如一个节点被某个新节点替代）</li>
+<li>token存入system.peers中</li>
+</ul>
+</li>
+</ol>
+<p>至此节点加入哈希环的步骤完成，如果此时我们在种子上运行nodetool status查看节点状态，就可以看到新加入的节点即状态为UN(UP/NORMAL)，因为在加入之前就启动了Gossiper，新加入节点的信息会及时传播到整个集群。</p>
+<h3 id="关于pendingrange"><a href="#关于pendingrange" class="headerlink" title="关于pendingrange"></a>关于pendingrange</h3><p>在有节点离开、加入、移动时，哈希环上token range的分布会改变，如果同时有多个节点发生这种变化那么token range的计算就会很复杂，cassandra中的实现是把多个这些操作作批处理，具体的计算逻辑在calculatePendingRanges()方法中，遵循的原则是在变化过程中保留最大可能的range，宁可写入多余的数据，也不能丢失可能的数据写入，多余的数据可以在之后进行清除，具体的解释参考该方法的注释。</p>
+<p>这些变动的range会保存到tokenMetadata的pendingRanges中，在执行写入的时候会查询写入的数据会不会落入到这些range，如果满足的话，则把写入的数据也发给对应的节点。</p>
+<h2 id="Gossip协议的实现"><a href="#Gossip协议的实现" class="headerlink" title="Gossip协议的实现"></a>Gossip协议的实现</h2><p>Gossiper交换的消息都是有版本信息的，由generation和version两部分组成，其中generation是启动的时候从system.local中查询是否有保存的generation，如果不存在或小于当前时间戳（以秒为单位）时，则使用当前的时间戳，否则使用已保存的generation。对于某个节点，其自身的generation在以运行过程中是不变的，只有在重启之后才变化。</p>
+<p>在GossipTask的run方法中，首先递增自身状态的version，然后把所有节点的状态信息放到一个打乱的列表中并组装成GossipDigestSyn消息。创建好消息之后，就会选择一个目标进行发送：</p>
+<ol>
+<li><p>先随机选择一个存活的节点发送该消息</p>
+</li>
+<li><p>按照一定的概率随机选择一个不可达的节点发送消息以检测其是否恢复，概率的计算方式如下：</p>
+ <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">// prob的意义很明显，不可达的节点越多，探测的机率就要越大</span><br><span class="line">double prob = unreachableEndpointCount / (liveEndpointCount + 1); // + 1 是规避0的情况</span><br><span class="line">double randDbl = random.nextDouble();</span><br><span class="line">if (randDbl &lt; prob)</span><br><span class="line">    sendGossip(message, unreachableEndpoints.keySet());</span><br></pre></td></tr></table></figure></li>
+<li><p>如果第一步选择的节点不是种子节点或者当前存活的节点的数小于种子节点的数量，则会根据一定的概率随机选择一个种子节点发送消息。</p>
+</li>
+</ol>
+<p>最后进行状态检测：</p>
+<ol>
+<li><p>如果还有未处理完的接受的GOSSIP相关消息，且最近一次处理的GOSSIP消息距离现在小于1秒（即GossipTask的执行间隔时间），那么睡眠100ms。再次检查最新一次处理的GOSSIp消息距离现在的时间间隔，如果还是小于1秒直接返回。[TODO 说明本节点处理消息的速度太慢 ???]</p>
+</li>
+<li><p>对本地所保存的节点信息进行遍历，遍历过程中先调用FailureDetectore的interpret()方法检测其状态，如果FailureDetector认为该节点发生故障，则会回调Gossiper的convict()方法，该回调方法会把节点从liveEndpoints转移到unreachableEndpoints，并设置状态isAlive=false。如果该节点的expireTime(TODO)小于当前时间，则会调用evictFromMembership()方法，把该节点从unreachableEndpoints、endpointStateMap和expireTimeEndpointMap中都移除，同时放入justRemovedEndpoints中，在此后的QUARANTINE_DELAY时间内，即使接收到有关该节点的信息，也会忽略。这是为了防止在把移除该节点的消息广播到所有节点时，该节点被错误地复活。</p>
+</li>
+</ol>
+<p>下面具体来看一轮Gossip协议详细的处理过程：</p>
+<ol>
+<li><p>节点A向节点B发送GossipDigestSynMessage消息，消息中gDigests保存的是节点A所记录的各节点状态的摘要GossipDigest，GossipDigest主要有三个属性：节点地址endpoint、节点的generation和节点的maxVersion.</p>
+</li>
+<li><p>节点B接收到消息时，调用GossipDigestSynVerbHandler类（在初始化StorageService的时候会在MessageService中注册各种消息的handler）的doVerb()方法进行处理，其中最主要的逻辑是根据generation和version计算出节点A和节点B所保存的节点信息的差异，并封装成GossipDigestAck消息返回给节点A。GossipDigestAck类中，gDigestList属性是节点A拥有的更新的节点状态的摘要信息，epStateMap属性是节点B拥有的更新的节点状态的详细信息。</p>
+</li>
+<li><p>节点A收到GossipDigestAck消息后，在GossipDigestAckVerbHandler的doVerv进行处理。如果消息中的epStateMap不为空，则对其中每一项，记&lt;节点X, X-EndpintState&gt;，先更新节点X在FailureDetector中的采样信息。如果节点A没有节点X的相关信息（新节点加入），或者节点A记录的generation比X-EndpintState中的小（节点重启），则调用handleMajorStateChange()处理。如果两者的generation相等，X-EndpintState中的version更大，则调用applyNewStates()处理（更新本地缓存的节点信息，并进行回调）。如果消息中的gDigestList不为空，则找出节点A所保存的相应节点的详细的状态信息，然后保存GossipDigestAck2中，并发送给节点B。</p>
+</li>
+<li><p>节点B收到GossipDigestAck2消息后，采用和节点A相同的逻辑处理其中的epStateMap。</p>
+</li>
+</ol>
+<p>从这里可以看出两轮ACK主要是为了交换双方各自所拥有的更新的数据来进行本节点的状态数据和FailureDetectore的采样数据。</p>
+<h2 id="故障检测器"><a href="#故障检测器" class="headerlink" title="故障检测器"></a>故障检测器</h2><p>Cassandra中FailureDetectore的设计是参考”The Phi Accrual Failure Detector”文章设计的，其基本思路是根据历史数据（滑动窗口）判断在当前时刻节点发生故障的概率，如果概率大于某个值则认为确实发生故障。采用方式的根据原因是网络本身是抖动的，如果心跳超时就认为对方故障，那么显然是由可能误判的，所以需要做的是尽量减少误判的概率。</p>
+<p>Cassandra中计算发生故障的概率的方式如下<sup>2</sup>：</p>
+<blockquote>
+<p>记P_later为在当前时刻节点B发生故障的概率，那么P_later取值如下</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">&gt;P_later(t) = 1 - F(t)</span><br></pre></td></tr></table></figure>
+<p>其中F(t)表示到从开始一轮Gossip协议到现在间隔时间t内收到回复消息的概率，那么1-F(t)就是未收到回复消息的概率，也就是说节点发生故障的概率。假设回复事件的达到满足指数分布，那么t时间内收到回复的概率是</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">&gt;F(t) = (1 - e^(-Lt))    </span><br></pre></td></tr></table></figure>
+<p>其中参数L的最大似然估计是达到时间的平均值的倒数，记为 1/mean。从而我们得到</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">&gt;P_later(t) = 1 - (1 - e^(-t/mean)) = e^(-t/mean)</span><br></pre></td></tr></table></figure>
+<p>现在定义phi(t)如下:</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">&gt;phi(t) = -log10(P_later(t)) </span><br><span class="line">       = -log(e^(-t/mean)) / log(10)</span><br><span class="line">       = (t/mean) / log(10)</span><br><span class="line">       = 0.4342945 * t / mean</span><br></pre></td></tr></table></figure>
+<p>当phi值大于阈值，就认为发生故障。</p>
+</blockquote>
+<p><em><strong>reference</strong></em></p>
+<ol>
+<li><p><a target="_blank" rel="noopener" href="http://kaiyuan.me/2015/07/08/Gossip/">http://kaiyuan.me/2015/07/08/Gossip/</a></p>
+</li>
+<li><p><a target="_blank" rel="noopener" href="https://issues.apache.org/jira/browse/CASSANDRA-2597">https://issues.apache.org/jira/browse/CASSANDRA-2597</a></p>
+</li>
+</ol>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/10/16/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%948-Gossip%E5%8D%8F%E8%AE%AE%E5%92%8C%E6%95%85%E9%9A%9C%E6%A3%80%E6%B5%8B/" data-id="ckzldzrag0007tofwchp68v0y" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+    <a href="/2019/10/24/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%949-ANTI-ENTROPY-REPAIR/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Newer</strong>
+      <div class="article-nav-title">
+        
+          Cassandra源码阅读随笔9. ANTI-ENTROPY REPAIR
+        
+      </div>
+    </a>
+  
+  
+    <a href="/2019/10/10/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%947-COMPACTION/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Older</strong>
+      <div class="article-nav-title">Cassandra源码阅读随笔7. COMPACTION</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tags</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/BookKeeper/" rel="tag">BookKeeper</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Parser-combinator/" rel="tag">Parser combinator</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Pulasr/" rel="tag">Pulasr</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tag Cloud</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/BookKeeper/" style="font-size: 10px;">BookKeeper</a> <a href="/tags/Cassandra/" style="font-size: 20px;">Cassandra</a> <a href="/tags/HBase/" style="font-size: 15px;">HBase</a> <a href="/tags/Parser-combinator/" style="font-size: 10px;">Parser combinator</a> <a href="/tags/Pulasr/" style="font-size: 10px;">Pulasr</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2020/03/">March 2020</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/12/">December 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/11/">November 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/10/">October 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/09/">September 2019</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/">Parser combinator初探1-简易JSON解析器</a>
+          </li>
+        
+          <li>
+            <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/">Cassandra笔记1-Compaction策略</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/">HBase源码阅读随笔2-MemStore</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]-Pulsar简要介绍</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]BookKeeper简要介绍</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2022 Bao Qingping<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+
+  
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+  </div>
+</body>
+</html>

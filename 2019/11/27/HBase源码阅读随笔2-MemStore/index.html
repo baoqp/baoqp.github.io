@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+
+  
+  <title>HBase源码阅读随笔2-MemStore | Baoqp&#39;s Blog</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="memstorememstore相关的主要逻辑都定义在抽象类AbstractMemStore，其中主要属性是两个Segment，一个是当前保存写入数据的可修改Segment，一个是Memstore执行快照生成的不可修改Segment，在把memstore flush成HFile的时候需要执行快照。 123456789public abstract class AbstractMemStore im">
+<meta property="og:type" content="article">
+<meta property="og:title" content="HBase源码阅读随笔2-MemStore">
+<meta property="og:url" content="http://example.com/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/index.html">
+<meta property="og:site_name" content="Baoqp&#39;s Blog">
+<meta property="og:description" content="memstorememstore相关的主要逻辑都定义在抽象类AbstractMemStore，其中主要属性是两个Segment，一个是当前保存写入数据的可修改Segment，一个是Memstore执行快照生成的不可修改Segment，在把memstore flush成HFile的时候需要执行快照。 123456789public abstract class AbstractMemStore im">
+<meta property="og:locale">
+<meta property="article:published_time" content="2019-11-27T13:02:44.000Z">
+<meta property="article:modified_time" content="2019-11-27T13:08:03.314Z">
+<meta property="article:author" content="Bao Qingping">
+<meta property="article:tag" content="HBase">
+<meta name="twitter:card" content="summary">
+  
+    <link rel="alternate" href="/atom.xml" title="Baoqp&#39;s Blog" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.1"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">Baoqp&#39;s Blog</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://example.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main"><article id="post-HBase源码阅读随笔2-MemStore" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/" class="article-date">
+  <time datetime="2019-11-27T13:02:44.000Z" itemprop="datePublished">2019-11-27</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="article-title" itemprop="name">
+      HBase源码阅读随笔2-MemStore
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <h2 id="memstore"><a href="#memstore" class="headerlink" title="memstore"></a>memstore</h2><p>memstore相关的主要逻辑都定义在抽象类AbstractMemStore，其中主要属性是两个Segment，一个是当前保存写入数据的可修改Segment，一个是Memstore执行快照生成的不可修改Segment，在把memstore flush成HFile的时候需要执行快照。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">public abstract class AbstractMemStore implements MemStore &#123;</span><br><span class="line"></span><br><span class="line">    // 当前执行操作的可修改segment</span><br><span class="line">    private volatile MutableSegment active;</span><br><span class="line">    </span><br><span class="line">    // memstore的快照，不可修改，用于flusher</span><br><span class="line">    protected volatile ImmutableSegment snapshot;</span><br><span class="line"></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>AbstractMemStore中的两个主要写入相关操作add()和upsert()分别调用了MutableSegment的add()和upsert()，ImmutableSegment类中没有这连个方法所以无法修改。MutableSegment和ImmutableSegment都继承自抽象类Segment，该类中最主要的三个属性如下，其中memStoreLAB是保存cell序列化数据的，有关memStoreLAB的细节和作用见后文；cellSet保存的是序列化cell的引用，且是有序的；排序所依据的就是comparator属性。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">public abstract class Segment implements MemStoreSizing &#123;</span><br><span class="line">    private AtomicReference&lt;CellSet&gt; cellSet = new AtomicReference&lt;&gt;();</span><br><span class="line">    private final CellComparator comparator;</span><br><span class="line">    private MemStoreLAB memStoreLAB;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>AbstractMemStore的add()和upsert()方法如下。对于add()，会先把cell数据中的数据以序列化的形式保存到 active segment的memStoreLAB（如果cell数据过大或没有使用mslab等情况下，不会拷贝到memStoreLAB，而是序列化到一个字节数组，见deepCopyIfNeeded()方法），然后加入到有序的cellSet中。对于upsert，不会尝试拷贝到memStoreLAB中[TODO ???]。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br></pre></td><td class="code"><pre><span class="line">public abstract class AbstractMemStore implements MemStore &#123;</span><br><span class="line">    </span><br><span class="line">    @Override</span><br><span class="line">    public void add(Cell cell, MemStoreSizing memstoreSizing) &#123;</span><br><span class="line">        doAddOrUpsert(cell, 0, memstoreSizing, true);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    private void upsert(Cell cell, long readpoint, MemStoreSizing memstoreSizing) &#123;</span><br><span class="line">        doAddOrUpsert(cell, readpoint, memstoreSizing, false);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    private void doAddOrUpsert(Cell cell, long readpoint, MemStoreSizing memstoreSizing, boolean doAdd) &#123;</span><br><span class="line">        MutableSegment currentActive;</span><br><span class="line">        boolean succ = false;</span><br><span class="line">        while (!succ) &#123;</span><br><span class="line">            currentActive = getActive();</span><br><span class="line">            succ = preUpdate(currentActive, cell, memstoreSizing);</span><br><span class="line">            if (succ) &#123;</span><br><span class="line">                if (doAdd) &#123;</span><br><span class="line">                    doAdd(currentActive, cell, memstoreSizing);</span><br><span class="line">                &#125; else &#123;</span><br><span class="line">                    doUpsert(currentActive, cell, readpoint, memstoreSizing);</span><br><span class="line">                &#125;</span><br><span class="line">                postUpdate(currentActive);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    private void doAdd(MutableSegment currentActive, Cell cell, MemStoreSizing memstoreSizing) &#123;</span><br><span class="line">        Cell toAdd = maybeCloneWithAllocator(currentActive, cell, false); // 拷贝到active segment的memStoreLAB中</span><br><span class="line">        boolean mslabUsed = (toAdd != cell);</span><br><span class="line">        // 默认是开启MSLAB, cell会被拷贝到MSLAB管理的内存块中。如果没有拷贝到MSLAB，则需要进行一次深拷贝。</span><br><span class="line">        // 否则的话会一直持有这些大块的内存，阻止GC回收他们。</span><br><span class="line">        // 以下情况不会拷贝到MSLAB</span><br><span class="line">        // 1. MSLAB没有启用。见参数&quot;hbase.hregion.memstore.mslab.enabled&quot;</span><br><span class="line">        // 2. cell的大小超过参数&quot;hbase.hregion.memstore.mslab.max.allocation&quot;设置的值，默认为256KB</span><br><span class="line">        // 3. cell来自Append/Increment操作</span><br><span class="line">        if (!mslabUsed) &#123;</span><br><span class="line">            toAdd = deepCopyIfNeeded(toAdd);</span><br><span class="line">        &#125;</span><br><span class="line">        internalAdd(currentActive, toAdd, mslabUsed, memstoreSizing); // 加入到currentActive的cell set中</span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">    private void doUpsert(MutableSegment currentActive, Cell cell, long readpoint, MemStoreSizing memstoreSizing) &#123;</span><br><span class="line">        cell = deepCopyIfNeeded(cell);</span><br><span class="line">        boolean sizeAddedPreOperation = sizeAddedPreOperation();</span><br><span class="line">        currentActive.upsert(cell, readpoint, memstoreSizing, sizeAddedPreOperation);</span><br><span class="line">        setOldestEditTimeToNow();</span><br><span class="line">   &#125;</span><br><span class="line"></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>此外，upsert和add的区别在于：add是简单地添加cell, 同一个cell（指key相同）会有多个版本（时间戳不相同）；而upsert会尝试删除老版本的cell, 见如下的MutableSegment#upsert()方法。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br></pre></td><td class="code"><pre><span class="line">public void upsert(Cell cell, long readpoint, MemStoreSizing memStoreSizing, boolean sizeAddedPreOperation) &#123;</span><br><span class="line">        internalAdd(cell, false, memStoreSizing, sizeAddedPreOperation); // 添加到cellSet中</span><br><span class="line"></span><br><span class="line">        // 获取具有相同row/family/qualifier的cell，忽略时间戳</span><br><span class="line">        Cell firstCell = PrivateCellUtil.createFirstOnRowColTS(cell, HConstants.LATEST_TIMESTAMP);</span><br><span class="line">        SortedSet&lt;Cell&gt; ss = this.tailSet(firstCell);</span><br><span class="line">        Iterator&lt;Cell&gt; it = ss.iterator();</span><br><span class="line">        int versionsVisible = 0;</span><br><span class="line">        while (it.hasNext()) &#123;</span><br><span class="line">            Cell cur = it.next();</span><br><span class="line">            if (cell == cur) &#123;</span><br><span class="line">                // 跳过当前加入的cell</span><br><span class="line">                continue;</span><br><span class="line">            &#125;</span><br><span class="line">             // 删除已存在的相同key的cell</span><br><span class="line">            if (CellUtil.matchingRows(cell, cur) &amp;&amp; CellUtil.matchingQualifier(cell, cur)) &#123; </span><br><span class="line">                // only remove Puts that concurrent scanners cannot possibly see</span><br><span class="line">                // [TODO ???]</span><br><span class="line">                if (cur.getTypeByte() == KeyValue.Type.Put.getCode() &amp;&amp; cur.getSequenceId() &lt;= readpoint) &#123;</span><br><span class="line">                    if (versionsVisible &gt;= 1) &#123;</span><br><span class="line">                        // if we get here we have seen at least one version visible to the oldest scanner,</span><br><span class="line">                        // which means we can prove that no scanner will see this version</span><br><span class="line">                        ...... // 更新内存占用统计</span><br><span class="line">                        it.remove();</span><br><span class="line">                    &#125; else &#123; </span><br><span class="line">                        versionsVisible++;</span><br><span class="line">                    &#125;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125; else &#123;</span><br><span class="line">                // past the row or column, done</span><br><span class="line">                break;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+
+
+<p>下面再来看MemStoreLAB(MSLAB)， MSLAB是一个基于指针碰撞的内存分配器，负责memstore的内存分配，每个MutableSegment都有一个MSLAB实例。MSLAB分配的是可以池化的大块内存chunk，默认大小为2MB. 通过把给定memstore的cell数据保存在大块连续的内存中，可以确保在flush memstore的时候释放大块的连续内存，从而减少RegionServer的堆内存碎片。如果不使用MSLAB，那么插入数据时分配的字节数组会交错在整个堆中，老年代的碎片也会越来越多，直到触发一个STW的GC. 实际的内存块分配是由MSLAB持有的ChunkCreator单例负责，MSLAB主要提供了复制cell到chunk的方法。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br></pre></td><td class="code"><pre><span class="line">public class MemStoreLABImpl implements MemStoreLAB &#123;</span><br><span class="line"></span><br><span class="line">    private Cell copyCellInto(Cell cell, int maxAlloc) &#123;</span><br><span class="line">        int size = Segment.getCellLength(cell); // 获取序列化后的长度</span><br><span class="line">        Preconditions.checkArgument(size &gt;= 0, &quot;negative size&quot;);</span><br><span class="line">        // 是否超过了允许放到mslab的最大大小 </span><br><span class="line">        if (size &gt; maxAlloc) &#123;</span><br><span class="line">            return null;</span><br><span class="line">        &#125;</span><br><span class="line">        Chunk c = null;</span><br><span class="line">        int allocOffset = 0;</span><br><span class="line">        while (true) &#123;</span><br><span class="line">            c = getOrMakeChunk(); // 尝试获取当前可用的chunk</span><br><span class="line">            if (c != null) &#123;</span><br><span class="line">                // 在chunk中分配size大小的空间，并返回数据在chunk中的初始偏移</span><br><span class="line">                // 如果空间不够，返回-1</span><br><span class="line">                allocOffset = c.alloc(size);</span><br><span class="line">                if (allocOffset != -1) &#123;</span><br><span class="line">                    // We succeeded - this is the common case - small alloc</span><br><span class="line">                    // from a big buffer</span><br><span class="line">                    break;</span><br><span class="line">                &#125;</span><br><span class="line">                // not enough space!</span><br><span class="line">                // try to retire this chunk</span><br><span class="line">                // 没有足够空间，设置currChunk为null</span><br><span class="line">                tryRetireChunk(c);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        // 拷贝数据到分配的空间</span><br><span class="line">        return copyToChunkCell(cell, c.getData(), allocOffset, size);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">    private Chunk getOrMakeChunk() &#123;</span><br><span class="line">        Chunk c = currChunk.get();</span><br><span class="line">        if (c != null) &#123;</span><br><span class="line">            return c;</span><br><span class="line">        &#125;</span><br><span class="line">        if (lock.tryLock()) &#123;</span><br><span class="line">            try &#123;</span><br><span class="line">                c = currChunk.get();</span><br><span class="line">                if (c != null) &#123;</span><br><span class="line">                    return c;</span><br><span class="line">                &#125;</span><br><span class="line">                c = this.chunkCreator.getChunk(idxType);</span><br><span class="line">                if (c != null) &#123;</span><br><span class="line">                    currChunk.set(c);</span><br><span class="line">                    chunks.add(c.getId()); // 记录所使用的chunk，便于后面的释放</span><br><span class="line">                    return c;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125; finally &#123;</span><br><span class="line">                lock.unlock();</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        return null;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">&#125;</span><br><span class="line">````</span><br><span class="line"></span><br><span class="line">在管理Chunk的ChunkCreator类中，根据用途把chunk分为INDEX_CHUNK, DATA_CHUNK和JUMBO_CHUNK三类，其中index chunk和data chunk的大小是固定的，且前者是后者的1/10，jumbo chunk用于存储更大的对象，大小不固定。index chunk和data chunk支持池化，对象池的实现是基于BlockingQueue的MemStoreChunkPool类，jumbo chunk不支持池化。在创建ChunkCreator单例的时候，会初始化chunkPool，并分配一定数量的chunk。</span><br><span class="line"></span><br><span class="line">内存块Chunk主要属性如下，其中chunk的id会写入chunk的头部，因此可用的空间是从id后面开始。在chunk中分配空间时，只需要增大nextFreeOffset（前提是有足够的剩余大小）。</span><br></pre></td></tr></table></figure>
+<p>public abstract class Chunk {</p>
+<pre><code>protected AtomicInteger nextFreeOffset = new AtomicInteger(UNINITIALIZED); // 空闲区域的其实位置
+
+protected AtomicInteger allocCount = new AtomicInteger(); // 该chunk分配次数，即放入了多少元素
+
+protected final int size; // 块大小
+
+private final int id; // 块id
+
+private final boolean fromPool; // 是否池化
+</code></pre>
+<p>}</p>
+<pre><code>Chunk有两个子类：OnheapChunk和OffheapChunk，顾名思义就是在堆内或堆外分配内存。
+
+## flush memstore
+
+flush的流程大体分为以下三步：
+1. memstore生成snapshot和相应的scanner
+2. 迭代scanner并写入临时文件
+3. 写入完成后把临时文件移动到ColumnFamily对应的目录下，更新storefiles，清除snapshot以释放占用的内存空间
+
+需要注意的是在flush过程中如果发生异常，那么需要重启regionserver，这样异常引起的snapshot内容丢失可以在启动的时候从wal日志中恢复[TODO ???]。
+
+</code></pre>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/" data-id="ckzldzrak000gtofw1zv2djhb" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+    <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Newer</strong>
+      <div class="article-nav-title">
+        
+          Cassandra笔记1-Compaction策略
+        
+      </div>
+    </a>
+  
+  
+    <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Older</strong>
+      <div class="article-nav-title">[译]-Pulsar简要介绍</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tags</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/BookKeeper/" rel="tag">BookKeeper</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Parser-combinator/" rel="tag">Parser combinator</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Pulasr/" rel="tag">Pulasr</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tag Cloud</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/BookKeeper/" style="font-size: 10px;">BookKeeper</a> <a href="/tags/Cassandra/" style="font-size: 20px;">Cassandra</a> <a href="/tags/HBase/" style="font-size: 15px;">HBase</a> <a href="/tags/Parser-combinator/" style="font-size: 10px;">Parser combinator</a> <a href="/tags/Pulasr/" style="font-size: 10px;">Pulasr</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2020/03/">March 2020</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/12/">December 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/11/">November 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/10/">October 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/09/">September 2019</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/">Parser combinator初探1-简易JSON解析器</a>
+          </li>
+        
+          <li>
+            <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/">Cassandra笔记1-Compaction策略</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/">HBase源码阅读随笔2-MemStore</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]-Pulsar简要介绍</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]BookKeeper简要介绍</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2022 Bao Qingping<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+
+  
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+  </div>
+</body>
+</html>

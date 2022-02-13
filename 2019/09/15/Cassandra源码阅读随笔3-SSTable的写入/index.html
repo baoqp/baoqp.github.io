@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+
+  
+  <title>Cassandra源码阅读随笔3. SSTable的写入 | Baoqp&#39;s Blog</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta name="description" content="从前面知道，我们知道更新操作都是在memtable中完成，在一定条件下需要memtable刷到磁盘。一是为了防止memtable占用内存过大，二是为了回收commit log文件。那这个刷入磁盘条件如何判断？在cassandra的发展过程中，出现过几种策略：  定期刷入磁盘（配置memtable_flush_after参数） 根据更新次数（配置memtable_operations参数） 根据吞吐">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Cassandra源码阅读随笔3. SSTable的写入">
+<meta property="og:url" content="http://example.com/2019/09/15/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%943-SSTable%E7%9A%84%E5%86%99%E5%85%A5/index.html">
+<meta property="og:site_name" content="Baoqp&#39;s Blog">
+<meta property="og:description" content="从前面知道，我们知道更新操作都是在memtable中完成，在一定条件下需要memtable刷到磁盘。一是为了防止memtable占用内存过大，二是为了回收commit log文件。那这个刷入磁盘条件如何判断？在cassandra的发展过程中，出现过几种策略：  定期刷入磁盘（配置memtable_flush_after参数） 根据更新次数（配置memtable_operations参数） 根据吞吐">
+<meta property="og:locale">
+<meta property="og:image" content="http://example.com/2019/09/15/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%943-SSTable%E7%9A%84%E5%86%99%E5%85%A5/column_index.png">
+<meta property="og:image" content="http://example.com/2019/09/15/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%943-SSTable%E7%9A%84%E5%86%99%E5%85%A5/index_summary.png">
+<meta property="article:published_time" content="2019-09-15T01:24:11.000Z">
+<meta property="article:modified_time" content="2019-11-03T10:25:57.051Z">
+<meta property="article:author" content="Bao Qingping">
+<meta property="article:tag" content="Cassandra">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="http://example.com/2019/09/15/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%943-SSTable%E7%9A%84%E5%86%99%E5%85%A5/column_index.png">
+  
+    <link rel="alternate" href="/atom.xml" title="Baoqp&#39;s Blog" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.1"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">Baoqp&#39;s Blog</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://example.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main"><article id="post-Cassandra源码阅读随笔3-SSTable的写入" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/09/15/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%943-SSTable%E7%9A%84%E5%86%99%E5%85%A5/" class="article-date">
+  <time datetime="2019-09-15T01:24:11.000Z" itemprop="datePublished">2019-09-15</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 class="article-title" itemprop="name">
+      Cassandra源码阅读随笔3. SSTable的写入
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <p>从前面知道，我们知道更新操作都是在memtable中完成，在一定条件下需要memtable刷到磁盘。一是为了防止memtable占用内存过大，二是为了回收commit log文件。那这个刷入磁盘条件如何判断？在cassandra的发展过程中，出现过几种策略：</p>
+<ol>
+<li>定期刷入磁盘（配置memtable_flush_after参数）</li>
+<li>根据更新次数（配置memtable_operations参数）</li>
+<li>根据吞吐量（配置memtable_throughput参数）</li>
+<li>根据内存占用情况（配置memtable_total_space_in_mb参数，默认值是堆内存的1/4）</li>
+</ol>
+<p>显然第4种策略是最合理的。 那么如何测量内存占用呢？Cassandra中使用jamm这个包，但实际上并不是每次都去准确测量内存占用的（因为很慢，特别是memtable很大的时候）。Cassandra中有个liveRatio属性，该属性的含义是内存占用大小和序列化大小的比例，我们知道内存的java对象除了实际的数据外，还包括对象头等信息，那么一个对象的内存占用是比序列化大小更大的。liveRatio的范围是[1, 64]，默认值是10。在Memtable中，有个currentSize属性，该属性记录了memtable序列化之后的大小，每次写入操作都会更新该值。有个了currentSize之后，再乘以liveRatio就可以估算出当前的内存占用了。现在的问题又变成了如何计算和更新liveRatio。</p>
+<p>Memtable的类属性中有个meterExecutor，这是一个单线程的ExecutorService，负责执行测量memtable内存占用的runnable。 Memetable在完成一次写入后，会调用maybeUpdateLiveRatio()方法来判断是否要进行内存占用的测量，判断的依据是当前对memtable的操作次数是上一次测量时的操作次数的10倍（此处的操作次数不是指一次数据写入，而是指一次写入中的列数，再加上deleteInfo相关的数据数量）。从这个依据来看，随着memtable的写入，内存测量的频率会也越来越低，这是合理的，因为总体上数据越来越多，多次算出的liveRatio会越来越接近，从而可以减少计算次数。当需要测量内存的时候会向meterExecutor提交一个MeteringRunnable，在计算出新的ratio，如何比原来的小，那么会保守地设置为<code> memtable.liveRatio = (memtable.liveRatio + newRatio) / 2.0</code>，这样可以尽量减小把内存占用估低从而带来OOM的风险。</p>
+<p>Cassandra在启动的时候会启动一个MeteredFlusher单例，之后每隔1秒meteredFlusher会执行一次，看下其run()方法，从中可见不止在所有memtable所占内存超过大小时会flush，如果某个columnfFamilyStore的memtable超过一定的大小，也会开始启动flush。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br></pre></td><td class="code"><pre><span class="line">public void run() &#123;</span><br><span class="line"></span><br><span class="line">       long allowedSize = calculateAllowedSize();</span><br><span class="line"></span><br><span class="line">       // find how much memory non-active memtables are using</span><br><span class="line">       // 计算非活跃（等待flush）的memtable占用的大小</span><br><span class="line">       long flushingSize = calculateFlushingSize();</span><br><span class="line">       if (flushingSize &gt; 0)</span><br><span class="line">           logger.debug(&quot;Currently flushing &#123;&#125; bytes of &#123;&#125; max&quot;, flushingSize, allowedSize);</span><br><span class="line"></span><br><span class="line">       List&lt;ColumnFamilyStore&gt; affectedCFs = affectedColumnFamilies();</span><br><span class="line">       long liveSize = 0;</span><br><span class="line"></span><br><span class="line">       // flush CFs using more than 1 / (maximum number of memtables it could have in the pipeline)</span><br><span class="line">       // of the total size allotted. Then, flush other CFs in order of size if necessary.</span><br><span class="line">       for (ColumnFamilyStore cfs : affectedCFs) &#123;</span><br><span class="line">           int maxInFlight = (int) Math.ceil((double) (1 // live memtable</span><br><span class="line">                   + 1 // potentially a flushed memtable being counted by jamm</span><br><span class="line">                   + DatabaseDescriptor.getFlushWriters()</span><br><span class="line">                   + DatabaseDescriptor.getFlushQueueSize())</span><br><span class="line">                   / (1 + cfs.indexManager.getIndexesBackedByCfs().size())); // TODO</span><br><span class="line">           long size = cfs.getTotalMemtableLiveSize();</span><br><span class="line">           // 大小超过允许值</span><br><span class="line">           if (allowedSize &gt; flushingSize &amp;&amp; size &gt; (allowedSize - flushingSize) / maxInFlight) &#123;</span><br><span class="line">               logger.info(&quot;Flushing high-traffic column family &#123;&#125; (estimated &#123;&#125; bytes)&quot;, cfs, size);</span><br><span class="line">               cfs.forceFlush();</span><br><span class="line">           &#125; else &#123;</span><br><span class="line">               liveSize += size;</span><br><span class="line">           &#125;</span><br><span class="line">       &#125;</span><br><span class="line"></span><br><span class="line">       if (liveSize + flushingSize &lt;= allowedSize)</span><br><span class="line">           return;</span><br><span class="line">       logger.info(&quot;Estimated &#123;&#125; live and &#123;&#125; flushing bytes used by all memtables&quot;, liveSize, flushingSize);</span><br><span class="line"></span><br><span class="line">       Collections.sort(affectedCFs, new Comparator&lt;ColumnFamilyStore&gt;() &#123;</span><br><span class="line">           public int compare(ColumnFamilyStore lhs, ColumnFamilyStore rhs) &#123;</span><br><span class="line">               return Long.compare(lhs.getTotalMemtableLiveSize(), rhs.getTotalMemtableLiveSize());</span><br><span class="line">           &#125;</span><br><span class="line">       &#125;);</span><br><span class="line"></span><br><span class="line">       // 如果已经超过大小限制，按照memtable占用大小排序，从大到小flush，直到占用内存回到设定阈值以下</span><br><span class="line">       // flush largest first until we get below our threshold.</span><br><span class="line">       // although it looks like liveSize + flushingSize will stay a constant, it will not if flushes finish</span><br><span class="line">       // while we loop, which is especially likely to happen if the flush queue fills up (so further forceFlush calls block)</span><br><span class="line">       while (!affectedCFs.isEmpty()) &#123;</span><br><span class="line">           flushingSize = calculateFlushingSize();</span><br><span class="line">           if (liveSize + flushingSize &lt;= allowedSize)</span><br><span class="line">               break;</span><br><span class="line"></span><br><span class="line">           ColumnFamilyStore cfs = affectedCFs.remove(affectedCFs.size() - 1);</span><br><span class="line">           long size = cfs.getTotalMemtableLiveSize();</span><br><span class="line">           if (size &gt; 0) &#123;</span><br><span class="line">               logger.info(&quot;Flushing &#123;&#125; to free up &#123;&#125; bytes&quot;, cfs, size);</span><br><span class="line">               liveSize -= size;</span><br><span class="line">               cfs.forceFlush();</span><br><span class="line">           &#125;</span><br><span class="line">       &#125;</span><br><span class="line"></span><br><span class="line">       logger.trace(&quot;Memtable memory usage is &#123;&#125; bytes with &#123;&#125; live&quot;, liveSize + flushingSize, liveSize);</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+<p>columnFamilyStore的forceFlush()方法主要调用了该类中的switchMemtable()方法，该方法中主要是向flushWriter提交一个FlushRunnable以及向postFlushExecutor中提交flush完成需要进行的操作。因为在该方法中要获取全局的switchLock，而flush操作是I/O操作，肯定是要异步执行的。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br></pre></td><td class="code"><pre><span class="line">public Future&lt;?&gt; switchMemtable(final boolean writeCommitLog, boolean forceSwitch) &#123;</span><br><span class="line">       /*</span><br><span class="line">        * If we can get the writelock, that means no new updates can come in and</span><br><span class="line">        * all ongoing updates to memtables have completed. We can get the tail</span><br><span class="line">        * of the log and use it as the starting position for log replay on recovery.</span><br><span class="line">        *</span><br><span class="line">        * This is why we Keyspace.switchLock needs to be global instead of per-Keyspace:</span><br><span class="line">        * we need to schedule discardCompletedSegments calls in the same order as their</span><br><span class="line">        * contexts (commitlog position) were read, even though the flush executor</span><br><span class="line">        * is multithreaded.</span><br><span class="line">        */</span><br><span class="line">       Keyspace.switchLock.writeLock().lock();</span><br><span class="line">       try &#123;</span><br><span class="line">           final Future&lt;ReplayPosition&gt; ctx = writeCommitLog ? CommitLog.instance.getContext() :</span><br><span class="line">                   Futures.immediateFuture(ReplayPosition.NONE);</span><br><span class="line"></span><br><span class="line">           // submit the memtable for any indexed sub-cfses, and our own.</span><br><span class="line">           final List&lt;ColumnFamilyStore&gt; icc = new ArrayList&lt;&gt;();</span><br><span class="line">           for (ColumnFamilyStore cfs : concatWithIndexes()) &#123;</span><br><span class="line">               if (forceSwitch || !cfs.getMemtableThreadSafe().isClean())</span><br><span class="line">                   icc.add(cfs);</span><br><span class="line">           &#125;</span><br><span class="line"></span><br><span class="line">           final CountDownLatch latch = new CountDownLatch(icc.size());</span><br><span class="line">           for (ColumnFamilyStore cfs : icc) &#123;</span><br><span class="line">               // 生成新的memtable替换需要flush的memtable</span><br><span class="line">               Memtable memtable = cfs.data.switchMemtable();</span><br><span class="line">               if (memtable.isClean()) &#123;</span><br><span class="line">                   cfs.replaceFlushed(memtable, null);</span><br><span class="line">                   latch.countDown();</span><br><span class="line">               &#125; else &#123;</span><br><span class="line">                   logger.info(&quot;Enqueuing flush of &#123;&#125;&quot;, memtable);</span><br><span class="line">                   // 向flushWriter提交一个FlushRunnable</span><br><span class="line">                   memtable.flushAndSignal(latch, ctx);</span><br><span class="line">               &#125;</span><br><span class="line">           &#125;</span><br><span class="line"></span><br><span class="line">           if (metric.memtableSwitchCount.count() == Long.MAX_VALUE)</span><br><span class="line">               metric.memtableSwitchCount.clear();</span><br><span class="line">           metric.memtableSwitchCount.inc();</span><br><span class="line"></span><br><span class="line">           // when all the memtables have been written, including for indexes, mark the flush in the commitlog header.</span><br><span class="line">           // a second executor makes sure the onMemtableFlushes get called in the right order,</span><br><span class="line">           // while keeping the wait-for-flush (future.get) out of anything latency-sensitive.</span><br><span class="line">           return postFlushExecutor.submit(new WrappedRunnable() &#123;</span><br><span class="line">               public void runMayThrow() throws InterruptedException, ExecutionException &#123;</span><br><span class="line">                   latch.await(); // 等待所有的flush完成</span><br><span class="line"></span><br><span class="line">                   if (!icc.isEmpty()) &#123;</span><br><span class="line">                       for (SecondaryIndex index : indexManager.getIndexesNotBackedByCfs()) &#123;</span><br><span class="line">                           // flush any non-cfs backed indexes</span><br><span class="line">                           logger.info(&quot;Flushing SecondaryIndex &#123;&#125;&quot;, index);</span><br><span class="line">                           index.forceBlockingFlush();</span><br><span class="line">                       &#125;</span><br><span class="line">                   &#125;</span><br><span class="line"></span><br><span class="line">                   if (writeCommitLog) &#123;</span><br><span class="line">                       // if we&#x27;re not writing to the commit log, we are replaying the log, so marking</span><br><span class="line">                       // the log header with &quot;you can discard anything written before the context&quot; is not valid</span><br><span class="line">                       CommitLog.instance.discardCompletedSegments(metadata.cfId, ctx.get());</span><br><span class="line">                   &#125;</span><br><span class="line">               &#125;</span><br><span class="line">           &#125;);</span><br><span class="line">       &#125; finally &#123;</span><br><span class="line">           Keyspace.switchLock.writeLock().unlock();</span><br><span class="line">       &#125;</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+
+<p>接着看下FlushRunnable中的主要逻辑如下，简单来说就是创建一个SSTableWriter实例，然后循环所有的记录，调用append()方法进行写入，写入完成后再打开一个SSTableReader，用于后续对该SSTable的读取操作。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br></pre></td><td class="code"><pre><span class="line">protected void runMayThrow() throws Exception &#123;</span><br><span class="line">    long writeSize = getExpectedWriteSize();</span><br><span class="line">    // 获取有足够空间的目录</span><br><span class="line">    Directories.DataDirectory dataDirectory = getWriteDirectory(writeSize);</span><br><span class="line">    // 获取dataDirectory下保存sstable的子目录</span><br><span class="line">    File sstableDirectory = cfs.directories.getLocationForDisk(dataDirectory);</span><br><span class="line">    assert sstableDirectory != null : &quot;Flush task is not bound to any disk&quot;;</span><br><span class="line">    // 生成sstable</span><br><span class="line">    SSTableReader sstable = writeSortedContents(context, sstableDirectory);</span><br><span class="line">        cfs.replaceFlushed(Memtable.this, sstable);</span><br><span class="line">    latch.countDown();</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">private SSTableReader writeSortedContents(Future&lt;ReplayPosition&gt; context, File sstableDirectory)</span><br><span class="line">        throws ExecutionException, InterruptedException &#123;</span><br><span class="line">    logger.info(&quot;Writing &quot; + Memtable.this.toString());</span><br><span class="line">    SSTableReader ssTable;</span><br><span class="line">    // errors when creating the writer that may leave empty temp files.</span><br><span class="line">    // 生成sstable的临时路径，创建SSTableWriter，sstable的路径名的形式是ks-cf(-tmp)-version-fileIndex-component.db</span><br><span class="line">    SSTableWriter writer = createFlushWriter(cfs.getTempSSTablePath(sstableDirectory));</span><br><span class="line">    try &#123;</span><br><span class="line">        // (we can&#x27;t clear out the map as-we-go to free up memory,</span><br><span class="line">        //  since the memtable is being used for queries in the &quot;pending flush&quot; category)</span><br><span class="line">        for (Map.Entry&lt;RowPosition, AtomicSortedColumns&gt; entry : rows.entrySet()) &#123;</span><br><span class="line">            ColumnFamily cf = entry.getValue();</span><br><span class="line">            if (cf.isMarkedForDelete()) &#123; // 已经标记为要删除</span><br><span class="line">                // When every node is up, there&#x27;s no reason to write batchlog data out to sstables</span><br><span class="line">                // (which in turn incurs cost like compaction) since the BL write + delete cancel each other out,</span><br><span class="line">                // and BL data is strictly local, so we don&#x27;t need to preserve tombstones for repair.</span><br><span class="line">                // If we have a data row + row level tombstone, then writing it is effectively an expensive no-op so we skip it.</span><br><span class="line">                // See CASSANDRA-4667.</span><br><span class="line">                if (cfs.name.equals(SystemKeyspace.BATCHLOG_CF) &amp;&amp; cfs.keyspace.getName().equals(Keyspace.SYSTEM_KS)</span><br><span class="line">                        &amp;&amp; !(cf.getColumnCount() == 0))</span><br><span class="line">                    continue;</span><br><span class="line">                // TODO ???</span><br><span class="line">                // Pedantically, you could purge column level tombstones that are past GcGRace when writing to the SSTable.</span><br><span class="line">                // But it can result in unexpected behaviour where deletes never make it to disk, as they are lost</span><br><span class="line">                    // and so cannot override existing column values. So we only remove deleted columns if there</span><br><span class="line">                // is a CF level tombstone to ensure the delete makes it into an SSTable.</span><br><span class="line">                    // We also shouldn&#x27;t be dropping any columns obsoleted by partition and/or range tombstones in case</span><br><span class="line">                // the table has secondary indexes, or else the stale entries wouldn&#x27;t be cleaned up during compaction,</span><br><span class="line">                // and will only be dropped during 2i query read-repair, if at all.</span><br><span class="line">                if (!cfs.indexManager.hasIndexes())</span><br><span class="line">                    // 移除删除的列，或者schema中被drop的列</span><br><span class="line">                    currentSize.addAndGet(-ColumnFamilyStore.removeDeletedColumnsOnly(cf, Integer.MIN_VALUE));</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            if (cf.getColumnCount() &gt; 0 || cf.isMarkedForDelete())</span><br><span class="line">                writer.append((DecoratedKey) entry.getKey(), cf);</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        if (writer.getFilePointer() &gt; 0) &#123; //filePoint是当前写入的位置</span><br><span class="line">            ssTable = writer.closeAndOpenReader(); // 打开SSTable Reader</span><br><span class="line">            logger.info(String.format(&quot;Completed flushing %s (%d bytes) for commitlog position %s&quot;,</span><br><span class="line">                    ssTable.getFilename(), new File(ssTable.getFilename()).length(), context.get()));</span><br><span class="line">        &#125; else &#123;</span><br><span class="line">            writer.abort();</span><br><span class="line">            ssTable = null;</span><br><span class="line">            logger.info(&quot;Completed flushing; nothing needed to be retained.  Commitlog position was &#123;&#125;&quot;, context.get());</span><br><span class="line">        &#125;</span><br><span class="line">        return ssTable;</span><br><span class="line">    &#125; catch (Throwable e) &#123;</span><br><span class="line">        writer.abort();</span><br><span class="line">        throw Throwables.propagate(e);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>现在的重点来到了SSTableWriter类，先看下类中的重要属性</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">private IndexWriter iwriter; // 负责索引文件的写入</span><br><span class="line">  private SegmentedFile.Builder dbuilder;</span><br><span class="line">  private final SequentialWriter dataFile; // 负责sstable数据的写入</span><br><span class="line">  private DecoratedKey lastWrittenKey; // 最后一个写入的key</span><br><span class="line">  private FileMark dataMark;</span><br><span class="line">  private final SSTableMetadata.Collector sstableMetadataCollector; // 记录和统计元数据</span><br></pre></td></tr></table></figure>
+<p>接着看主要的append()方法以及其中的rawAppend()方法</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br></pre></td><td class="code"><pre><span class="line">public void append(DecoratedKey decoratedKey, ColumnFamily cf) &#123;</span><br><span class="line">       if (decoratedKey.key.remaining() &gt; FBUtilities.MAX_UNSIGNED_SHORT) &#123;</span><br><span class="line">           logger.error(&quot;Key size &#123;&#125; exceeds maximum of &#123;&#125;, skipping row&quot;,</span><br><span class="line">                   decoratedKey.key.remaining(),</span><br><span class="line">                   FBUtilities.MAX_UNSIGNED_SHORT);</span><br><span class="line">           return;</span><br><span class="line">       &#125;</span><br><span class="line">       // 检查是否满足写入数据是有序的,获取当前写入位置</span><br><span class="line">       long startPosition = beforeAppend(decoratedKey);</span><br><span class="line">       try &#123;</span><br><span class="line">           RowIndexEntry entry = rawAppend(cf, startPosition, decoratedKey, dataFile.stream);</span><br><span class="line">           afterAppend(decoratedKey, startPosition, entry);</span><br><span class="line">       &#125; catch (IOException e) &#123;</span><br><span class="line">           throw new FSWriteError(e, dataFile.getPath());</span><br><span class="line">       &#125;</span><br><span class="line">       // 更新元数据中的统计数据</span><br><span class="line">       sstableMetadataCollector.update(dataFile.getFilePointer() - startPosition, cf.getColumnStats());</span><br><span class="line">   &#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">   public static RowIndexEntry rawAppend(ColumnFamily cf, long startPosition,</span><br><span class="line">                                         DecoratedKey key, DataOutput out) throws IOException &#123;</span><br><span class="line">       // 要么有列内容，或者是个tombstone</span><br><span class="line">       assert cf.getColumnCount() &gt; 0 || cf.isMarkedForDelete();</span><br><span class="line"></span><br><span class="line">       // build()中完成了列的写入，并返回了列索引</span><br><span class="line">       ColumnIndex.Builder builder = new ColumnIndex.Builder(cf, key.key, out);</span><br><span class="line">       ColumnIndex index = builder.build(cf);</span><br><span class="line"></span><br><span class="line">       out.writeShort(END_OF_ROW);</span><br><span class="line">       return RowIndexEntry.create(startPosition, cf.deletionInfo().getTopLevelDeletion(), index);</span><br><span class="line">   &#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line"></span><br><span class="line">   	// ColumnIndex的build方法</span><br><span class="line">  		public ColumnIndex build(ColumnFamily cf) throws IOException &#123;</span><br><span class="line">           // cf has disentangled the columns and range tombstones, we need to re-interleave them in comparator order</span><br><span class="line">           Iterator&lt;RangeTombstone&gt; rangeIter = cf.deletionInfo().rangeIterator();</span><br><span class="line">           RangeTombstone tombstone = rangeIter.hasNext() ? rangeIter.next() : null;</span><br><span class="line">           Comparator&lt;ByteBuffer&gt; comparator = cf.getComparator();</span><br><span class="line"></span><br><span class="line">           for (Column c : cf) &#123;</span><br><span class="line">               // 按照名称顺序写入，如果RangeTombstone.min在前，则先写RangeTombstone</span><br><span class="line">               while (tombstone != null &amp;&amp; comparator.compare(c.name(), tombstone.min) &gt;= 0) &#123;</span><br><span class="line">                   add(tombstone);</span><br><span class="line">                   tombstone = rangeIter.hasNext() ? rangeIter.next() : null;</span><br><span class="line">               &#125;</span><br><span class="line">               add(c);</span><br><span class="line">           &#125;</span><br><span class="line"></span><br><span class="line">           while (tombstone != null) &#123;</span><br><span class="line">               add(tombstone);</span><br><span class="line">               tombstone = rangeIter.hasNext() ? rangeIter.next() : null;</span><br><span class="line">           &#125;</span><br><span class="line">           ColumnIndex index = build();</span><br><span class="line"></span><br><span class="line">           maybeWriteEmptyRowHeader();</span><br><span class="line"></span><br><span class="line">           return index;</span><br><span class="line">       &#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">	// ColumnIndex的add方法</span><br><span class="line">       public void add(OnDiskAtom column) throws IOException &#123;</span><br><span class="line">           atomCount++;</span><br><span class="line"></span><br><span class="line">           if (firstColumn == null) &#123;</span><br><span class="line">               firstColumn = column;</span><br><span class="line">               startPosition = endPosition;</span><br><span class="line">               // TODO: have that use the firstColumn as min + make sure we optimize that on read</span><br><span class="line">               // 计算indexBlock开头需要写入的RangeTombstone，并返回写入的大小</span><br><span class="line">               endPosition += tombstoneTracker.writeOpenedMarker(firstColumn, output, atomSerializer);</span><br><span class="line">               blockSize = 0; // We don&#x27;t count repeated tombstone marker in the block size, to avoid a situation</span><br><span class="line">               // where we wouldn&#x27;t make any progress because a block is filled by said marker</span><br><span class="line">           &#125;</span><br><span class="line"></span><br><span class="line">           long size = column.serializedSizeForSSTable();</span><br><span class="line">           endPosition += size;</span><br><span class="line">           blockSize += size;</span><br><span class="line"></span><br><span class="line">           // if we hit the column index size that we have to index after, go ahead and index it.</span><br><span class="line">           // 当达到column_index_size_in_kb大小生成一个IndexInfo，同时开始一个新的block</span><br><span class="line">           if (blockSize &gt;= DatabaseDescriptor.getColumnIndexSize()) &#123;</span><br><span class="line">               IndexHelper.IndexInfo cIndexInfo = new IndexHelper.IndexInfo(firstColumn.name(),</span><br><span class="line">                       column.name(), indexOffset + startPosition, endPosition - startPosition);</span><br><span class="line">               result.columnsIndex.add(cIndexInfo);</span><br><span class="line">               firstColumn = null;</span><br><span class="line">               lastBlockClosing = column;</span><br><span class="line">           &#125;</span><br><span class="line"></span><br><span class="line">           // 写入rowHeader,包括key和行级别的deleteInfo</span><br><span class="line">           maybeWriteRowHeader();</span><br><span class="line"></span><br><span class="line">           // 写入column</span><br><span class="line">           atomSerializer.serializeForSSTable(column, output);</span><br><span class="line"></span><br><span class="line">           // TODO: Should deal with removing unneeded tombstones</span><br><span class="line">           // 移除不再会和后面的列有交集的RangeTombStone</span><br><span class="line">           tombstoneTracker.update(column, false);</span><br><span class="line"></span><br><span class="line">           lastColumn = column;</span><br><span class="line">       &#125;</span><br></pre></td></tr></table></figure>
+<p>在rawAppend()方法中出现了ColumnIndex类，顾名思义，该类表示给列加索引。因为Cassandra中的一行允许有很多列（最多2亿），显然这么多列在没有索引的情况下读取会很慢。在写入一行记录的时候会给column做索引，而Column索引（也称为promoted index）是每隔column_index_size_in_kb大小（称为IndexBolck）创建一个索引（并不是每隔几列，因为磁盘的读取是以Block为单位的），用IndexHelper.IndexInfo表示，如下图所示（图片来自参考文章2）。索引中包括该index block的第一个column和最后一个column。column index使得我们可以跳过前面的block来直接读取某些列所在的block，减少了IO操作的次数。此外我们需要在每个block的开头写入和该block相交的所有rangTombstone（表示列名落在该区间的列都被打上了删除标记），比如某个rangeTombstone的覆盖的区间很大，包含了当前block在内的多个block，那么该rangeTombstone是保存在block之前的，而要只读取当前block又需要知道该block的所有相交的rangeTombstone，就需要在写入的时候，把rangeTomestone也写入当前block。rangeTombstone和column都是OnDiskAtom，从这里可以看出OnDiskAtom并不是严格有序的，但是column是严格有序的，但这并不会造成任何问题。<br><img src="column_index.png" alt="column index"></p>
+<p>rawAppend()方法最后返回了RowIndexEntry实例，其中记录了该行数据在sstable的起始位置以及column index，之后会调用afterAppend()方法把RowIndexEntry写入索引文件，其中主要调用了IndexWriter的append()方法，其中除了把key和对应的索引项写入索引文件，还每隔indexInterval项，向IndexSummaryBuilder中写入索引项的key和在索引文件中的位置。IndexSummary相当于是索引的索引，即整个索引是两层索引：底层是数据记录的索引，一行记录一个索引，是稠密索引；上层是稀疏索引，每隔indexInterval项，给记录索引创建一个索引。indexInterval默认是128，如果记录数增多，那么indexSummary中的项也会增大，但是indexSummary需要常驻内存，所以不能无限增长，默认最多项目是Integer.MAX_VALUE，超过了限制就会增大interval。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br></pre></td><td class="code"><pre><span class="line">// 追加index项到index文件</span><br><span class="line">   public void append(DecoratedKey key, RowIndexEntry indexEntry) &#123;</span><br><span class="line">   	// 向bloom filter写入数据</span><br><span class="line">       bf.add(key.key);</span><br><span class="line">       // 索引文件当前的写入位置</span><br><span class="line">       long indexPosition = indexFile.getFilePointer();</span><br><span class="line">       try &#123;</span><br><span class="line">       	// 写入key</span><br><span class="line">           ByteBufferUtil.writeWithShortLength(key.key, indexFile.stream);</span><br><span class="line">           // 写入索引项</span><br><span class="line">           RowIndexEntry.serializer.serialize(indexEntry, indexFile.stream);</span><br><span class="line">       &#125; catch (IOException e) &#123;</span><br><span class="line">           throw new FSWriteError(e, indexFile.getPath());</span><br><span class="line">       &#125;</span><br><span class="line"></span><br><span class="line">          	</span><br><span class="line">       summary.maybeAddEntry(key, indexPosition);</span><br><span class="line">       builder.addPotentialBoundary(indexPosition);</span><br><span class="line">   &#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">   // IndexSummaryBuilder的maybeAddEntry()</span><br><span class="line">   public IndexSummaryBuilder maybeAddEntry(DecoratedKey decoratedKey, long indexPosition) &#123;</span><br><span class="line">   	// 每隔indexInterval写入key和在索引文件中的位置。</span><br><span class="line">       if (keysWritten % indexInterval == 0) &#123;</span><br><span class="line">           byte[] key = ByteBufferUtil.getArray(decoratedKey.key);</span><br><span class="line">           keys.add(key);</span><br><span class="line">           offheapSize += key.length;</span><br><span class="line">           positions.add(indexPosition);</span><br><span class="line">           offheapSize += TypeSizes.NATIVE.sizeof(indexPosition);</span><br><span class="line">       &#125;</span><br><span class="line">       keysWritten++;</span><br><span class="line"></span><br><span class="line">       return this;</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+<p>IndexSummary是保存在堆外内存中的，具体的内存布局在IndexSummaryBuilder的build()方法中。 首先整个大小为 所有key的长度总和 + 表示indexFile中位置的long型pisition变量 + key.size() * 4，其中最后为key.size()个整数，表示IndexSummary项在该段内存中的偏移量，如下图所示。根据前后两个偏移量就可以知道一个IndexSummary项的长度，由于Position是long类型，固定为8个字节，因此可以计算出key的长度，所以写入的时候虽然key是变长的，但是并没有key的长度。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br></pre></td><td class="code"><pre><span class="line">public IndexSummary build(IPartitioner partitioner) &#123;</span><br><span class="line">    assert keys != null &amp;&amp; keys.size() &gt; 0;</span><br><span class="line">    assert keys.size() == positions.size();</span><br><span class="line"></span><br><span class="line">    Memory memory = Memory.allocate(offheapSize + (keys.size() * 4));</span><br><span class="line">    int idxPosition = 0;</span><br><span class="line">    int keyPosition = keys.size() * 4;</span><br><span class="line">    for (int i = 0; i &lt; keys.size(); i++) &#123;</span><br><span class="line">        // 写入每一项在memory的偏移量 </span><br><span class="line">        memory.setInt(idxPosition, keyPosition);</span><br><span class="line">        idxPosition += TypeSizes.NATIVE.sizeof(keyPosition);</span><br><span class="line"></span><br><span class="line">        byte[] temp = keys.get(i);</span><br><span class="line">        memory.setBytes(keyPosition, temp, 0, temp.length);</span><br><span class="line">        keyPosition += temp.length;</span><br><span class="line">        long tempPosition = positions.get(i);</span><br><span class="line">        memory.setLong(keyPosition, tempPosition);</span><br><span class="line">        keyPosition += TypeSizes.NATIVE.sizeof(tempPosition);</span><br><span class="line">    &#125;</span><br><span class="line">    return new IndexSummary(partitioner, memory, keys.size(), indexInterval);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p><img src="index_summary.png" alt="column index"></p>
+<p>至此，一条记录的append过程处理完毕。</p>
+<p>Reference:</p>
+<ol>
+<li><p><a target="_blank" rel="noopener" href="https://thelastpickle.com/blog/2011/05/04/How-are-Memtables-measured.html">https://thelastpickle.com/blog/2011/05/04/How-are-Memtables-measured.html</a></p>
+</li>
+<li><p><a target="_blank" rel="noopener" href="https://zqhxuyuan.github.io/2016/10/19/Cassandra-Code-StorageEngine/">https://zqhxuyuan.github.io/2016/10/19/Cassandra-Code-StorageEngine/</a></p>
+</li>
+<li><p><a target="_blank" rel="noopener" href="http://distributeddatastore.blogspot.com/2013/08/cassandra-sstable-storage-format.html">http://distributeddatastore.blogspot.com/2013/08/cassandra-sstable-storage-format.html</a></p>
+</li>
+<li><p><a target="_blank" rel="noopener" href="https://stackoverflow.com/questions/34570367/cassandra-3-0-updated-sstable-format">https://stackoverflow.com/questions/34570367/cassandra-3-0-updated-sstable-format</a></p>
+</li>
+</ol>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/09/15/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%943-SSTable%E7%9A%84%E5%86%99%E5%85%A5/" data-id="ckzldzrat000vtofw8yao303v" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li></ul>
+
+    </footer>
+  </div>
+  
+    
+<nav id="article-nav">
+  
+    <a href="/2019/09/20/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%944-%E5%93%88%E5%B8%8C%E7%8E%AF%E5%92%8Chinted-handoff/" id="article-nav-newer" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Newer</strong>
+      <div class="article-nav-title">
+        
+          Cassandra源码阅读随笔4. 哈希环和hinted handoff
+        
+      </div>
+    </a>
+  
+  
+    <a href="/2019/09/11/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-INSERT%E7%9A%84%E6%89%A7%E8%A1%8C-Memtable%E5%92%8CCommitLog/" id="article-nav-older" class="article-nav-link-wrap">
+      <strong class="article-nav-caption">Older</strong>
+      <div class="article-nav-title">Cassandra源码阅读随笔2. INSERT的执行, Memtable和CommitLog</div>
+    </a>
+  
+</nav>
+
+  
+</article>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tags</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/BookKeeper/" rel="tag">BookKeeper</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Parser-combinator/" rel="tag">Parser combinator</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Pulasr/" rel="tag">Pulasr</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tag Cloud</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/BookKeeper/" style="font-size: 10px;">BookKeeper</a> <a href="/tags/Cassandra/" style="font-size: 20px;">Cassandra</a> <a href="/tags/HBase/" style="font-size: 15px;">HBase</a> <a href="/tags/Parser-combinator/" style="font-size: 10px;">Parser combinator</a> <a href="/tags/Pulasr/" style="font-size: 10px;">Pulasr</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2020/03/">March 2020</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/12/">December 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/11/">November 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/10/">October 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/09/">September 2019</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/">Parser combinator初探1-简易JSON解析器</a>
+          </li>
+        
+          <li>
+            <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/">Cassandra笔记1-Compaction策略</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/">HBase源码阅读随笔2-MemStore</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]-Pulsar简要介绍</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]BookKeeper简要介绍</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2022 Bao Qingping<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+
+  
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+  </div>
+</body>
+</html>

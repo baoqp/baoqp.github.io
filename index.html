@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  
+
+  
+  <title>Baoqp&#39;s Blog</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <meta property="og:type" content="website">
+<meta property="og:title" content="Baoqp&#39;s Blog">
+<meta property="og:url" content="http://example.com/index.html">
+<meta property="og:site_name" content="Baoqp&#39;s Blog">
+<meta property="og:locale">
+<meta property="article:author" content="Bao Qingping">
+<meta name="twitter:card" content="summary">
+  
+    <link rel="alternate" href="/atom.xml" title="Baoqp&#39;s Blog" type="application/atom+xml">
+  
+  
+    <link rel="icon" href="/favicon.png">
+  
+  
+    <link href="//fonts.googleapis.com/css?family=Source+Code+Pro" rel="stylesheet" type="text/css">
+  
+  
+<link rel="stylesheet" href="/css/style.css">
+
+<meta name="generator" content="Hexo 5.4.1"></head>
+
+<body>
+  <div id="container">
+    <div id="wrap">
+      <header id="header">
+  <div id="banner"></div>
+  <div id="header-outer" class="outer">
+    <div id="header-title" class="inner">
+      <h1 id="logo-wrap">
+        <a href="/" id="logo">Baoqp&#39;s Blog</a>
+      </h1>
+      
+    </div>
+    <div id="header-inner" class="inner">
+      <nav id="main-nav">
+        <a id="main-nav-toggle" class="nav-icon"></a>
+        
+          <a class="main-nav-link" href="/">Home</a>
+        
+          <a class="main-nav-link" href="/archives">Archives</a>
+        
+      </nav>
+      <nav id="sub-nav">
+        
+          <a id="nav-rss-link" class="nav-icon" href="/atom.xml" title="RSS Feed"></a>
+        
+        <a id="nav-search-btn" class="nav-icon" title="Search"></a>
+      </nav>
+      <div id="search-form-wrap">
+        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Search"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="http://example.com"></form>
+      </div>
+    </div>
+  </div>
+</header>
+      <div class="outer">
+        <section id="main">
+  
+    <article id="post-Parser-combinator初探1-简易JSON解析器" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/" class="article-date">
+  <time datetime="2020-03-07T10:31:45.000Z" itemprop="datePublished">2020-03-07</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="article-title" href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/">Parser combinator初探1-简易JSON解析器</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <p>在学习编译原理的前端的相关知识时，我们通常会接触到LR, LALR(1)等语法解析算法，这些算法都比较晦涩，而且实现起来比较困难。而解析器组合子（parser combinator）则相对易懂和易实现很多。wiki百科中的定义如下，通俗的解释就是解析器组合子是一种高阶函数，其接收若干个处理输入数据的解析函数并返回一个新的解析函数。</p>
+<blockquote>
+<p>A <strong>parser combinator</strong> is a higher-order function that accepts several parsers as input and returns a new parser as its output.</p>
+</blockquote>
+<p>解析器组合子适用于处理非左递归的文法，本质是递归下降的一种实现方式。参考 <a target="_blank" rel="noopener" href="https://medium.com/@armin.heller/using-parser-combinators-in-go-e63b3ad69c94">Using Parser Combinators in Go</a> 这篇文章中的go的实现方式，我们用java重新实现一遍，并在此基础上构建一个简单的JSON解析器。</p>
+<h2 id="Parser-combinator代码实现123"><a href="#Parser-combinator代码实现123" class="headerlink" title="Parser combinator代码实现123"></a>Parser combinator代码实现123</h2><p>首先定义Parser的输入如下：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">interface</span> <span class="title class_">Input</span> &#123;</span><br><span class="line">       <span class="comment">// 获取当前的字符</span></span><br><span class="line">       <span class="type">char</span> <span class="title function_">currentCodePoint</span><span class="params">()</span>;</span><br><span class="line">       <span class="comment">// 剩余的输入</span></span><br><span class="line">       Input <span class="title function_">remainingInput</span><span class="params">()</span>;</span><br><span class="line">       <span class="comment">// 剩余输入大小</span></span><br><span class="line">       <span class="type">int</span> <span class="title function_">remainSize</span><span class="params">()</span>;</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+
+<p>Parser函数对输入作用后的输出结果表示如下，其中remainingInput表示此次作用后剩下未处理的输入，用于后续的继续处理。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">class</span> <span class="title class_">Result</span> &#123;</span><br><span class="line">       <span class="comment">// result=null表示解析失败</span></span><br><span class="line">       Object result;</span><br><span class="line">       <span class="comment">// 返回剩余的输入</span></span><br><span class="line">       Input remainingInput;</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure>
+
+<p>Parser函数接口本身的定义为：</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">public</span> <span class="keyword">interface</span> <span class="title class_">Parser</span> &#123;</span><br><span class="line">	Result <span class="title function_">apply</span><span class="params">(Input input)</span>;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+
+
+<p>Parser的具体实现就是对某种模式的匹配，当我们把各种parser按照语法定义组合之后就可以得到该语法的解析器了。最常用的几种组合方法有：</p>
+<ul>
+<li><p>重复：重复当前parser，直到不匹配。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">default</span> Parser <span class="title function_">repeated</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="keyword">final</span> <span class="type">Parser</span> <span class="variable">curParser</span> <span class="operator">=</span> <span class="built_in">this</span>;</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">        <span class="meta">@Override</span></span><br><span class="line">        <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">            <span class="type">List</span> <span class="variable">list</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">ArrayList</span>();</span><br><span class="line">            <span class="type">Result</span> <span class="variable">result</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">Result</span>(list, input);</span><br><span class="line">            <span class="keyword">while</span> (result.result != <span class="literal">null</span>) &#123;</span><br><span class="line">                <span class="type">Result</span> <span class="variable">oneMoreResult</span> <span class="operator">=</span> curParser.apply(result.remainingInput);</span><br><span class="line">                <span class="keyword">if</span> (oneMoreResult.result == <span class="literal">null</span>) &#123;</span><br><span class="line">                    <span class="keyword">return</span> result;</span><br><span class="line">                &#125;</span><br><span class="line">                list.add(oneMoreResult.result);</span><br><span class="line">                result.remainingInput = oneMoreResult.remainingInput;</span><br><span class="line">            &#125;</span><br><span class="line">            <span class="keyword">return</span> result;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li><p>或：使用当前parser或备选parser进行匹配，需要注意的是我们采用贪婪匹配的模式，即当两个parser都能匹配时优先选择匹配内容更长的那个。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line"> default Parser orElse(Parser alternativeParser) &#123;</span><br><span class="line">    final Parser curParser = this;</span><br><span class="line">    return new Parser() &#123;</span><br><span class="line">        @Override</span><br><span class="line">        public Result apply(Input input) &#123;</span><br><span class="line">            Result result = curParser.apply(input);</span><br><span class="line">            Result alternativeResult = alternativeParser.apply(input);</span><br><span class="line">  </span><br><span class="line">            if(result.result == null) &#123;</span><br><span class="line">                return alternativeResult;</span><br><span class="line">            &#125;</span><br><span class="line">  </span><br><span class="line">            if(alternativeResult.result == null) &#123;</span><br><span class="line">                return result;</span><br><span class="line">            &#125;</span><br><span class="line">  </span><br><span class="line">            // 贪婪匹配</span><br><span class="line">            if(result.remainingInput.remainSize() &gt; alternativeResult.remainingInput.remainSize()) &#123;</span><br><span class="line">                return alternativeResult;</span><br><span class="line">            &#125;</span><br><span class="line">  </span><br><span class="line">            return result;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+<li><p>顺序：当前parser匹配完接着使用第二个parser匹配。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">default</span> Parser <span class="title function_">andThen</span><span class="params">(Parser secondParser)</span> &#123;</span><br><span class="line">       <span class="keyword">final</span> <span class="type">Parser</span> <span class="variable">firstParser</span> <span class="operator">=</span> <span class="built_in">this</span>;</span><br><span class="line">       <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">           <span class="meta">@Override</span></span><br><span class="line">           <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">               <span class="type">Result</span> <span class="variable">firstResult</span> <span class="operator">=</span> firstParser.apply(input);</span><br><span class="line">               <span class="keyword">if</span> (firstResult.result == <span class="literal">null</span>) &#123;</span><br><span class="line">                   <span class="keyword">return</span> firstResult;</span><br><span class="line">               &#125;</span><br><span class="line">               <span class="type">Result</span> <span class="variable">secondResult</span> <span class="operator">=</span> secondParser.apply(firstResult.remainingInput);</span><br><span class="line">               <span class="keyword">if</span> (secondResult.result != <span class="literal">null</span>) &#123;</span><br><span class="line">                   <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Result</span>(<span class="keyword">new</span> <span class="title class_">ParserHelper</span>.Pair(firstResult.result, secondResult.result), secondResult.remainingInput);</span><br><span class="line">               &#125;</span><br><span class="line">  </span><br><span class="line">               <span class="keyword">return</span> secondResult;</span><br><span class="line">           &#125;</span><br><span class="line">       &#125;;</span><br><span class="line">   &#125;</span><br></pre></td></tr></table></figure></li>
+<li><p>可选：当前parser可匹配则匹配，不可匹配就忽略。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line"> <span class="keyword">default</span> Parser <span class="title function_">optional</span><span class="params">()</span> &#123;</span><br><span class="line">    <span class="keyword">final</span> <span class="type">Parser</span> <span class="variable">curParser</span> <span class="operator">=</span> <span class="built_in">this</span>;</span><br><span class="line">    <span class="keyword">return</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">        <span class="meta">@Override</span></span><br><span class="line">        <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">            <span class="type">Result</span> <span class="variable">result</span> <span class="operator">=</span> curParser.apply(input);</span><br><span class="line">            <span class="keyword">if</span> (result.result != <span class="literal">null</span>) &#123;</span><br><span class="line">                <span class="keyword">return</span> result;</span><br><span class="line">            &#125;</span><br><span class="line">            result.result = <span class="keyword">new</span> <span class="title class_">Nothing</span>();</span><br><span class="line">            result.remainingInput = input;</span><br><span class="line">            <span class="keyword">return</span> result;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></li>
+</ul>
+<p>除此之外，还有</p>
+<ul>
+<li>onceOrMore：当前parser匹配一次或多次</li>
+<li>repeatAndFoldLeft：重复作用当前parser，并对产生的结果用累加函数进行处理</li>
+<li>bind：当前parser作用一次，并使用结果构建一个新的parser</li>
+<li>convert：对当前parser的作用结果进行转换</li>
+</ul>
+<h2 id="构建简易JSON解析器"><a href="#构建简易JSON解析器" class="headerlink" title="构建简易JSON解析器"></a>构建简易JSON解析器</h2><p>我们的简易JSON语法定义如下：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line">json := obj | arr</span><br><span class="line"></span><br><span class="line">obj := &#x27;&#123;&#x27; pair (&#x27;,&#x27; pair)* &#x27;&#125;&#x27;</span><br><span class="line">		| &#x27;&#123;&#x27; &#x27;&#125;&#x27;</span><br><span class="line">		</span><br><span class="line">pair := STRING &#x27;:&#x27; value</span><br><span class="line"></span><br><span class="line">arr := &#x27;[&#x27; value (&#x27;,&#x27; value)* &#x27;]&#x27; </span><br><span class="line">		| &#x27;[&#x27; &#x27;]&#x27;</span><br><span class="line">		</span><br><span class="line">value := STRING</span><br><span class="line">  		 | INTEGER</span><br><span class="line">  		 | obj</span><br><span class="line">  		 | arr</span><br><span class="line">  		 | &#x27;true&#x27;</span><br><span class="line">  		 | &#x27;false&#x27;</span><br><span class="line">  		 | &#x27;null&#x27;</span><br></pre></td></tr></table></figure>
+
+
+
+<p>根据语法定义，我们可以定义如下的parser，其中对于JsonObject用Map表示，对于JsonArray用List表示。</p>
+<figure class="highlight java"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">static</span> <span class="type">Parser</span> <span class="variable">pair</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">     <span class="meta">@Override</span></span><br><span class="line">     <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">         <span class="keyword">return</span> ParserHelper.expectString.andThen(expect(<span class="string">&quot;:&quot;</span>)).first() <span class="comment">// key</span></span><br><span class="line">                 .andThen(value)  <span class="comment">// value</span></span><br><span class="line">                 .convert(JSON::parsePair).apply(input);</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">static</span> <span class="type">Parser</span> <span class="variable">jsonObject</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">     <span class="meta">@Override</span></span><br><span class="line">     <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">         <span class="keyword">return</span> expect(<span class="string">&quot;&#123;&quot;</span>).andThen(pair.optional()).second().convert(JSON::buildMapWithPair)</span><br><span class="line">                 .bind(firstResult -&gt; expect(<span class="string">&quot;,&quot;</span>).andThen(pair).second()</span><br><span class="line">                         .repeatAndFoldLeft(firstResult, JSON::addKVPairToMap)).apply(input);</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">static</span> <span class="type">Parser</span> <span class="variable">jsonArray</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">     <span class="meta">@Override</span></span><br><span class="line">     <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">         <span class="keyword">return</span> expect(<span class="string">&quot;[&quot;</span>).andThen(value.optional()).second().convert(JSON::buildListWithValue)</span><br><span class="line">                 .bind(firstResult -&gt; expect(<span class="string">&quot;,&quot;</span>).andThen(value).second()</span><br><span class="line">                         .repeatAndFoldLeft(firstResult, JSON::addValueToList)).apply(input);</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">static</span> <span class="type">Parser</span> <span class="variable">value</span> <span class="operator">=</span> <span class="keyword">new</span> <span class="title class_">Parser</span>() &#123;</span><br><span class="line">     <span class="meta">@Override</span></span><br><span class="line">     <span class="keyword">public</span> Result <span class="title function_">apply</span><span class="params">(Input input)</span> &#123;</span><br><span class="line">         <span class="keyword">return</span> ParserHelper.expectInteger.convert(JSON::toInt)</span><br><span class="line">                 .orElse(expect(<span class="string">&quot;true&quot;</span>).convert(JSON::toBool))</span><br><span class="line">                 .orElse(expect(<span class="string">&quot;false&quot;</span>).convert(JSON::toBool))</span><br><span class="line">                 .orElse(expect(<span class="string">&quot;null&quot;</span>).convert(JSON::toNull))</span><br><span class="line">                 .orElse(ParserHelper.expectString)</span><br><span class="line">                 .orElse(jsonObject)</span><br><span class="line">                 .orElse(jsonArray)</span><br><span class="line">                 .apply(input);</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;;</span><br><span class="line"></span><br><span class="line"> <span class="keyword">static</span> <span class="type">Parser</span> <span class="variable">json</span> <span class="operator">=</span> jsonObject.orElse(jsonArray);</span><br></pre></td></tr></table></figure>
+
+
+
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/" data-id="ckzldzral000itofw105v0qhr" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Parser-combinator/" rel="tag">Parser combinator</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+  
+    <article id="post-Cassandra笔记1-Compaction策略" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/" class="article-date">
+  <time datetime="2019-12-28T14:09:43.000Z" itemprop="datePublished">2019-12-28</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="article-title" href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/">Cassandra笔记1-Compaction策略</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <blockquote>
+<p>以下内容来自于最后的Reference中几篇文章的翻译和总结 </p>
+</blockquote>
+<h2 id="Leveled-Compaction"><a href="#Leveled-Compaction" class="headerlink" title="Leveled Compaction"></a>Leveled Compaction</h2><p>Leveled Compaction的一个可用于判断它是否适合使用的基本特征是：在压缩时，Leveled Compaction会消耗更多的I/O，以确保一行数据最多分布在若干个SSTable中，而这个最大值就是层数；相较而言，size-tiered compaction无法提供这种保证。</p>
+<p>当使用Leveled Compaction，90%的读取只需要读取一个sstable，因此该策略适合使用的场景如下：</p>
+<ul>
+<li>对读取延迟的比较敏感</li>
+<li>高读/写比例</li>
+<li>数据更新频繁</li>
+<li>在宽表中使用删除或TTL列</li>
+</ul>
+<p>而不适合使用Leveled Compaction的场景为：</p>
+<ul>
+<li>磁盘IO压力过大，不足以支撑level  compaction的IO要求</li>
+<li>大量的写入负载</li>
+<li>数据只写入一次</li>
+</ul>
+<h2 id="DateTieredCompactionStrategy"><a href="#DateTieredCompactionStrategy" class="headerlink" title="DateTieredCompactionStrategy"></a>DateTieredCompactionStrategy</h2><p>C*的一个常用场景是存储时间序列数据。clustering key通常会和时间戳相关联，数据写入的速率也近乎是恒定的，数据写入的顺序和时间先后基本保持一致，只在小范围内（通常是几秒）和时间先后不一致。时间序列数据的查询通常都是针对给定分区的范围查询，类似于“过去一小时/天/周的数据”。</p>
+<p>每个sstable的元数据中都保存了sstable的最大和最小的clustering key，对于范围查询，可以根据这两个key快速过滤出不在范围内的sstable，这样可以提高效率。但是STCS和LCS并没有关注这一点儿，因此每个sstable的key范围可能都很宽。下图是使用STCS策略对连续写入的时间序列数据压缩后生成的sstable示意图。图中每个矩形表示一个sstable（共11个），矩形左右边表示其中key的最早和最晚写入时间，矩形面积为数据量大小。此时我们要访问某个时间范围的数据，如下图中的纵向的浅色矩形，可以看到需要对每个sstable都进行访问。<br><img src="image1.png"></p>
+<p>如果使用Date-Tiered Compaction Strategy (DTCS)，那么同样数据生成的sstable可能就是如下图所示，总共20个sstable随着时间线分布。sstable的数量和base_time_seconds 参数的设置有关，该参数越小，产生的sstable数量越多。当使用和前面相同的范围查询时，只访问了3个sstable。使用DTCS时的一个问题是对于最近一小时的查询比更早的某一个小时的查询的效率更低。<br><img src="image2.png"></p>
+<p>DTCS的原理和STCS的类似，但是不是基于sstable的尺寸，而是基于sstable的 “年龄”。年龄的计算方式是全局最大时间戳减去SSTable的最小时间戳 。根据年龄把sstable分组到不同的时间窗口内，同一个时间窗口内的进行合并，这样新旧数据就不会混合在一起。窗口大小是可以设置的，base_time_seconds 参数设置初始窗口为1小时（默认），即过去一小时内写入的数据在第一个窗口内。随着时间的推移老窗口会越来越大，直到max_sstable_age_days ，此后不会再参与合并。<br><img src="image3.png"><br>如上图所示，时间窗口随着时间的推移而移动，sstable根据最老数据的年龄排序（最小的时间戳）。在1中没有一个窗口含有4个及以上（由参数 min_threshold配置）的sstable，因此不会合并。随着时间的推移，进入状态2，其中某个时间窗口有4个sstable，那么就对该窗口内的sstable进行合并。在状态3中又有一个时间窗口内有4个sstable可以进行合并。</p>
+<p>显然DTCS适合于存储时间序列数据，它也是为此设计的。对于写入速率稳定的场景也可以考虑使用该策略。如果写入数据自行指定时间戳，而这个时间戳是高度无需的，或者和数据实际写入磁盘的时间相差很大的，那么就不适合使用DTCS.</p>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><p><a target="_blank" rel="noopener" href="https://www.datastax.com/blog/2011/10/when-use-leveled-compaction">When to Use Leveled Compaction</a><br><a target="_blank" rel="noopener" href="https://labs.spotify.com/2014/12/18/date-tiered-compaction/">Date-Tiered Compaction in Apache Cassandra</a><br><a target="_blank" rel="noopener" href="https://www.datastax.com/blog/2014/11/datetieredcompactionstrategy-compaction-time-series-data">DateTieredCompactionStrategy: Compaction for Time Series Data</a></p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/" data-id="ckzldzrai000btofwd8tud508" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+  
+    <article id="post-HBase源码阅读随笔2-MemStore" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/" class="article-date">
+  <time datetime="2019-11-27T13:02:44.000Z" itemprop="datePublished">2019-11-27</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="article-title" href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/">HBase源码阅读随笔2-MemStore</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <h2 id="memstore"><a href="#memstore" class="headerlink" title="memstore"></a>memstore</h2><p>memstore相关的主要逻辑都定义在抽象类AbstractMemStore，其中主要属性是两个Segment，一个是当前保存写入数据的可修改Segment，一个是Memstore执行快照生成的不可修改Segment，在把memstore flush成HFile的时候需要执行快照。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">public abstract class AbstractMemStore implements MemStore &#123;</span><br><span class="line"></span><br><span class="line">    // 当前执行操作的可修改segment</span><br><span class="line">    private volatile MutableSegment active;</span><br><span class="line">    </span><br><span class="line">    // memstore的快照，不可修改，用于flusher</span><br><span class="line">    protected volatile ImmutableSegment snapshot;</span><br><span class="line"></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>AbstractMemStore中的两个主要写入相关操作add()和upsert()分别调用了MutableSegment的add()和upsert()，ImmutableSegment类中没有这连个方法所以无法修改。MutableSegment和ImmutableSegment都继承自抽象类Segment，该类中最主要的三个属性如下，其中memStoreLAB是保存cell序列化数据的，有关memStoreLAB的细节和作用见后文；cellSet保存的是序列化cell的引用，且是有序的；排序所依据的就是comparator属性。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">public abstract class Segment implements MemStoreSizing &#123;</span><br><span class="line">    private AtomicReference&lt;CellSet&gt; cellSet = new AtomicReference&lt;&gt;();</span><br><span class="line">    private final CellComparator comparator;</span><br><span class="line">    private MemStoreLAB memStoreLAB;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>AbstractMemStore的add()和upsert()方法如下。对于add()，会先把cell数据中的数据以序列化的形式保存到 active segment的memStoreLAB（如果cell数据过大或没有使用mslab等情况下，不会拷贝到memStoreLAB，而是序列化到一个字节数组，见deepCopyIfNeeded()方法），然后加入到有序的cellSet中。对于upsert，不会尝试拷贝到memStoreLAB中[TODO ???]。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br></pre></td><td class="code"><pre><span class="line">public abstract class AbstractMemStore implements MemStore &#123;</span><br><span class="line">    </span><br><span class="line">    @Override</span><br><span class="line">    public void add(Cell cell, MemStoreSizing memstoreSizing) &#123;</span><br><span class="line">        doAddOrUpsert(cell, 0, memstoreSizing, true);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    private void upsert(Cell cell, long readpoint, MemStoreSizing memstoreSizing) &#123;</span><br><span class="line">        doAddOrUpsert(cell, readpoint, memstoreSizing, false);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    private void doAddOrUpsert(Cell cell, long readpoint, MemStoreSizing memstoreSizing, boolean doAdd) &#123;</span><br><span class="line">        MutableSegment currentActive;</span><br><span class="line">        boolean succ = false;</span><br><span class="line">        while (!succ) &#123;</span><br><span class="line">            currentActive = getActive();</span><br><span class="line">            succ = preUpdate(currentActive, cell, memstoreSizing);</span><br><span class="line">            if (succ) &#123;</span><br><span class="line">                if (doAdd) &#123;</span><br><span class="line">                    doAdd(currentActive, cell, memstoreSizing);</span><br><span class="line">                &#125; else &#123;</span><br><span class="line">                    doUpsert(currentActive, cell, readpoint, memstoreSizing);</span><br><span class="line">                &#125;</span><br><span class="line">                postUpdate(currentActive);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    private void doAdd(MutableSegment currentActive, Cell cell, MemStoreSizing memstoreSizing) &#123;</span><br><span class="line">        Cell toAdd = maybeCloneWithAllocator(currentActive, cell, false); // 拷贝到active segment的memStoreLAB中</span><br><span class="line">        boolean mslabUsed = (toAdd != cell);</span><br><span class="line">        // 默认是开启MSLAB, cell会被拷贝到MSLAB管理的内存块中。如果没有拷贝到MSLAB，则需要进行一次深拷贝。</span><br><span class="line">        // 否则的话会一直持有这些大块的内存，阻止GC回收他们。</span><br><span class="line">        // 以下情况不会拷贝到MSLAB</span><br><span class="line">        // 1. MSLAB没有启用。见参数&quot;hbase.hregion.memstore.mslab.enabled&quot;</span><br><span class="line">        // 2. cell的大小超过参数&quot;hbase.hregion.memstore.mslab.max.allocation&quot;设置的值，默认为256KB</span><br><span class="line">        // 3. cell来自Append/Increment操作</span><br><span class="line">        if (!mslabUsed) &#123;</span><br><span class="line">            toAdd = deepCopyIfNeeded(toAdd);</span><br><span class="line">        &#125;</span><br><span class="line">        internalAdd(currentActive, toAdd, mslabUsed, memstoreSizing); // 加入到currentActive的cell set中</span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">    private void doUpsert(MutableSegment currentActive, Cell cell, long readpoint, MemStoreSizing memstoreSizing) &#123;</span><br><span class="line">        cell = deepCopyIfNeeded(cell);</span><br><span class="line">        boolean sizeAddedPreOperation = sizeAddedPreOperation();</span><br><span class="line">        currentActive.upsert(cell, readpoint, memstoreSizing, sizeAddedPreOperation);</span><br><span class="line">        setOldestEditTimeToNow();</span><br><span class="line">   &#125;</span><br><span class="line"></span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>此外，upsert和add的区别在于：add是简单地添加cell, 同一个cell（指key相同）会有多个版本（时间戳不相同）；而upsert会尝试删除老版本的cell, 见如下的MutableSegment#upsert()方法。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br></pre></td><td class="code"><pre><span class="line">public void upsert(Cell cell, long readpoint, MemStoreSizing memStoreSizing, boolean sizeAddedPreOperation) &#123;</span><br><span class="line">        internalAdd(cell, false, memStoreSizing, sizeAddedPreOperation); // 添加到cellSet中</span><br><span class="line"></span><br><span class="line">        // 获取具有相同row/family/qualifier的cell，忽略时间戳</span><br><span class="line">        Cell firstCell = PrivateCellUtil.createFirstOnRowColTS(cell, HConstants.LATEST_TIMESTAMP);</span><br><span class="line">        SortedSet&lt;Cell&gt; ss = this.tailSet(firstCell);</span><br><span class="line">        Iterator&lt;Cell&gt; it = ss.iterator();</span><br><span class="line">        int versionsVisible = 0;</span><br><span class="line">        while (it.hasNext()) &#123;</span><br><span class="line">            Cell cur = it.next();</span><br><span class="line">            if (cell == cur) &#123;</span><br><span class="line">                // 跳过当前加入的cell</span><br><span class="line">                continue;</span><br><span class="line">            &#125;</span><br><span class="line">             // 删除已存在的相同key的cell</span><br><span class="line">            if (CellUtil.matchingRows(cell, cur) &amp;&amp; CellUtil.matchingQualifier(cell, cur)) &#123; </span><br><span class="line">                // only remove Puts that concurrent scanners cannot possibly see</span><br><span class="line">                // [TODO ???]</span><br><span class="line">                if (cur.getTypeByte() == KeyValue.Type.Put.getCode() &amp;&amp; cur.getSequenceId() &lt;= readpoint) &#123;</span><br><span class="line">                    if (versionsVisible &gt;= 1) &#123;</span><br><span class="line">                        // if we get here we have seen at least one version visible to the oldest scanner,</span><br><span class="line">                        // which means we can prove that no scanner will see this version</span><br><span class="line">                        ...... // 更新内存占用统计</span><br><span class="line">                        it.remove();</span><br><span class="line">                    &#125; else &#123; </span><br><span class="line">                        versionsVisible++;</span><br><span class="line">                    &#125;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125; else &#123;</span><br><span class="line">                // past the row or column, done</span><br><span class="line">                break;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+
+
+<p>下面再来看MemStoreLAB(MSLAB)， MSLAB是一个基于指针碰撞的内存分配器，负责memstore的内存分配，每个MutableSegment都有一个MSLAB实例。MSLAB分配的是可以池化的大块内存chunk，默认大小为2MB. 通过把给定memstore的cell数据保存在大块连续的内存中，可以确保在flush memstore的时候释放大块的连续内存，从而减少RegionServer的堆内存碎片。如果不使用MSLAB，那么插入数据时分配的字节数组会交错在整个堆中，老年代的碎片也会越来越多，直到触发一个STW的GC. 实际的内存块分配是由MSLAB持有的ChunkCreator单例负责，MSLAB主要提供了复制cell到chunk的方法。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br></pre></td><td class="code"><pre><span class="line">public class MemStoreLABImpl implements MemStoreLAB &#123;</span><br><span class="line"></span><br><span class="line">    private Cell copyCellInto(Cell cell, int maxAlloc) &#123;</span><br><span class="line">        int size = Segment.getCellLength(cell); // 获取序列化后的长度</span><br><span class="line">        Preconditions.checkArgument(size &gt;= 0, &quot;negative size&quot;);</span><br><span class="line">        // 是否超过了允许放到mslab的最大大小 </span><br><span class="line">        if (size &gt; maxAlloc) &#123;</span><br><span class="line">            return null;</span><br><span class="line">        &#125;</span><br><span class="line">        Chunk c = null;</span><br><span class="line">        int allocOffset = 0;</span><br><span class="line">        while (true) &#123;</span><br><span class="line">            c = getOrMakeChunk(); // 尝试获取当前可用的chunk</span><br><span class="line">            if (c != null) &#123;</span><br><span class="line">                // 在chunk中分配size大小的空间，并返回数据在chunk中的初始偏移</span><br><span class="line">                // 如果空间不够，返回-1</span><br><span class="line">                allocOffset = c.alloc(size);</span><br><span class="line">                if (allocOffset != -1) &#123;</span><br><span class="line">                    // We succeeded - this is the common case - small alloc</span><br><span class="line">                    // from a big buffer</span><br><span class="line">                    break;</span><br><span class="line">                &#125;</span><br><span class="line">                // not enough space!</span><br><span class="line">                // try to retire this chunk</span><br><span class="line">                // 没有足够空间，设置currChunk为null</span><br><span class="line">                tryRetireChunk(c);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        // 拷贝数据到分配的空间</span><br><span class="line">        return copyToChunkCell(cell, c.getData(), allocOffset, size);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">    private Chunk getOrMakeChunk() &#123;</span><br><span class="line">        Chunk c = currChunk.get();</span><br><span class="line">        if (c != null) &#123;</span><br><span class="line">            return c;</span><br><span class="line">        &#125;</span><br><span class="line">        if (lock.tryLock()) &#123;</span><br><span class="line">            try &#123;</span><br><span class="line">                c = currChunk.get();</span><br><span class="line">                if (c != null) &#123;</span><br><span class="line">                    return c;</span><br><span class="line">                &#125;</span><br><span class="line">                c = this.chunkCreator.getChunk(idxType);</span><br><span class="line">                if (c != null) &#123;</span><br><span class="line">                    currChunk.set(c);</span><br><span class="line">                    chunks.add(c.getId()); // 记录所使用的chunk，便于后面的释放</span><br><span class="line">                    return c;</span><br><span class="line">                &#125;</span><br><span class="line">            &#125; finally &#123;</span><br><span class="line">                lock.unlock();</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line">        return null;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">&#125;</span><br><span class="line">````</span><br><span class="line"></span><br><span class="line">在管理Chunk的ChunkCreator类中，根据用途把chunk分为INDEX_CHUNK, DATA_CHUNK和JUMBO_CHUNK三类，其中index chunk和data chunk的大小是固定的，且前者是后者的1/10，jumbo chunk用于存储更大的对象，大小不固定。index chunk和data chunk支持池化，对象池的实现是基于BlockingQueue的MemStoreChunkPool类，jumbo chunk不支持池化。在创建ChunkCreator单例的时候，会初始化chunkPool，并分配一定数量的chunk。</span><br><span class="line"></span><br><span class="line">内存块Chunk主要属性如下，其中chunk的id会写入chunk的头部，因此可用的空间是从id后面开始。在chunk中分配空间时，只需要增大nextFreeOffset（前提是有足够的剩余大小）。</span><br></pre></td></tr></table></figure>
+<p>public abstract class Chunk {</p>
+<pre><code>protected AtomicInteger nextFreeOffset = new AtomicInteger(UNINITIALIZED); // 空闲区域的其实位置
+
+protected AtomicInteger allocCount = new AtomicInteger(); // 该chunk分配次数，即放入了多少元素
+
+protected final int size; // 块大小
+
+private final int id; // 块id
+
+private final boolean fromPool; // 是否池化
+</code></pre>
+<p>}</p>
+<pre><code>Chunk有两个子类：OnheapChunk和OffheapChunk，顾名思义就是在堆内或堆外分配内存。
+
+## flush memstore
+
+flush的流程大体分为以下三步：
+1. memstore生成snapshot和相应的scanner
+2. 迭代scanner并写入临时文件
+3. 写入完成后把临时文件移动到ColumnFamily对应的目录下，更新storefiles，清除snapshot以释放占用的内存空间
+
+需要注意的是在flush过程中如果发生异常，那么需要重启regionserver，这样异常引起的snapshot内容丢失可以在启动的时候从wal日志中恢复[TODO ???]。
+
+</code></pre>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/" data-id="ckzldzrak000gtofw1zv2djhb" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+  
+    <article id="post-译-Pulsar简要介绍" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/" class="article-date">
+  <time datetime="2019-11-16T16:06:27.000Z" itemprop="datePublished">2019-11-17</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="article-title" href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]-Pulsar简要介绍</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <h2 id="Pulasr简介"><a href="#Pulasr简介" class="headerlink" title="Pulasr简介"></a>Pulasr简介</h2><p>Pulsar具有统一灵活的Messaging模型，作者称之为”Producer-Topic-Subscription-Consumer (PTSC)”。每个消息只会在topic中保存一次（由BookKeeper复制到多个节点）。消息可以被订阅topic的多个消费组消费，每个消费组可以自行决定消费方式（独占、共享、故障转移），如下图所示。<br><img src="image1.png"></p>
+<p>Messaging的使用场景大体上分为以下两类：</p>
+<ul>
+<li>Queueing — 消息是无序的，或点对点，或共享。这些使用场景下通常是与无状态应用一起使用。无状态应用程序不关心排序，但需要提供确认/删除单个消息的能力以及易于扩展并行性的能力。这大概占了所有使用场景的70%.</li>
+<li>Streaming — 严格有序的消息或独占的消息。独占消息意味着每个topic/分区只有一个消费者，这通常与有状态应用程序相关联。有状态的应用程序关心顺序和状态，因为顺序和状态将影响处理逻辑的正确性。这类应用还需要消息的重新处理能力，当发生错误时，计算引擎通常会回退并重新处理消息。</li>
+</ul>
+<p>Pulsar包含了queueing和streaming的使用场景，并对更常用的queueing场景做了优化:<br>首先，对于共享型订阅，使用轮询的方式向同一个订阅下的所有消费者发送消息，这意味着消费者数量可以多于分区数。为了增加消息消费的并行能力，除了增加消费者，在其他系统中通常还需要增加分区数量。在这方面。pulsar做得更好，其设计是可伸缩的，它将发布并行性的伸缩与消费并行性分离开来，允许生产者和消费者相互独立地伸缩。<br>其次，Pulsar通过部署一个有序交付的排他/故障转移订阅来实现streaming. </p>
+<p>Pulsar broker是无状态的，每个topic的某个分区都归属于某个broker，该broker称为<strong>owner broker</strong>。由于是无状态的，因此owner broker故障时只要把分区所有权移交给另外一个broker即可。<br><img src="image2.png"></p>
+<p><img src="image3.png"></p>
+<p>Pulsar的高性能是构建在一个高度可扩展的日志存储Apache BookKeeper之上。每个Topic本质上都是基于BookKeeper的分布式日志，也是基于此，Pulsar可以高效地实现其他消息系统中一个不易实现的功能：消息移除。</p>
+<p>Pulsar通过游标（cursor）系统来实现高效的消息移除。游标实质上是Pulsar中记录每个订阅的消息消费状态。Pulsar将游标的更新记录在BookKeeper ledger中，这使得Pulsar能够支持高吞吐量的游标更新。</p>
+<p>基于游标，Pulsar具备了消息单个确认（也称为选择性确认）的特点，确认后的消息将不会重新发送给消费者。下图说明了单个确认和累积确认之间的区别（灰色框中的消息表示已确认）。图中上半部分为累积确认示例，M12之前（包括M12）的消息被标记为已确认。图中下半部分为单个确认示例。仅确认消息M7和M12，在使用方失败的情况下，将重新发送除M7和M12之外的所有消息。对于独占/故障转移订阅，可以单个确认也可以累计确认；对于共享订阅，只能单个确认。<br><img src="image4.png"></p>
+<p>所有订阅都确认读取了的消息会被删除，如果设置了数据留存策略，则会根据策略判断何时删除已确认的消息。</p>
+<p>在发送消息时，还可以设置消息的TTL，消息在未被确认且超过TTL时也会被删除，即在任何消费者读取前就可能被删除。TTL独立应用于每个订阅，因此是逻辑删除（如果是物理删除的话就会影响其他订阅，可能对其他订阅的消费者来说该消息还未过期就被物理删除而无法读取）。</p>
+<h2 id="Pulsar架构"><a href="#Pulsar架构" class="headerlink" title="Pulsar架构"></a>Pulsar架构</h2><p>Pulsar的架构可以抽象为如下的分层结构。<br><img src="image5.png"></p>
+<h3 id="Layer-1-Topic-订阅和游标"><a href="#Layer-1-Topic-订阅和游标" class="headerlink" title="Layer 1 - Topic, 订阅和游标"></a>Layer 1 - Topic, 订阅和游标</h3><p>第1层是和客户端直接交互的，参考上一节的pulsar简介，此处不再赘述。</p>
+<h3 id="Layer-2-逻辑存储模型"><a href="#Layer-2-逻辑存储模型" class="headerlink" title="Layer 2 - 逻辑存储模型"></a>Layer 2 - 逻辑存储模型</h3><p>Pulsar的数据保存在BookKeeper中，每个Topic由一系列segment组成，每个segment对应BookKeeper中的一个ledger，而ledger又由多个fragment组成，每个fragment可以复制到不同的Bookie节点（只要有足够的节点）上，以提供副本冗余和提高读取性能。 fragement是BookKeep中最小的数据分布单元。Pulsar需要记录每个Topic所含的ledgers和fragments，这些元数据保存在ZooKeeper.<br><img src="image6.png"></p>
+<p>对比Kafka和Pulsar，可以发现两者在概念上都是很相近的，包括topic和分区，最大的不同是Kafka以分区为中心的，而Pulsar以segment为中心，segment的粒度更小，因此Pulsar的扩展性更好。<br><img src="image7.png"></p>
+<p>当创建新的topic或发生日志滚动（roll-over）时会创建新的ledger，而日志滚动是由于</p>
+<ul>
+<li>ledger大小超过限制</li>
+<li>ledger的所有权发生变化</li>
+</ul>
+<p>当创建新的ledger或fragment所在bookie在写入时发生错误或超时，会创建新的fragment.当broker接收到写入请求，broker会向topic的当前frament的write quorum所在的bookie节点进行写入。<br><img src="image8.png"></p>
+<p>对于读取，broker只需要访问一个Bookie即可，如果使用了读取缓存，则先查找缓存。<br><img src="image9.png"></p>
+<p>BookKeeper有一个重要的功能特性称为Fencing，该特性保证了只有一个写入者（broker）可以写入ledger，其工作原理如下（Qw表示write qurom，Qa表示accept qurom）：</p>
+<ol>
+<li>topic X的当前broker(B1) 被认定为故障或不可用（通过ZooKeeper监控）</li>
+<li>另外一个broker(B2)把topic X的状态从OPEN更新为IN_RECOVERY</li>
+<li>B2向ledger当前fragment所在的bookies发送fence消息，并等待至少(Qw-Qa)+1个回复。一旦收到这些回复，ledger就认为是被隔离了（fenced）。此时即使原来的broker B1还存活着，也不能向ledger进行写入了，因为无法达成Qa个确认消息（因为至少有(Qw-Qa)+1个bookie确认收到了fence消息，表示至少有一个accept qurom中的bookie不再确认写入）。</li>
+<li>B2询问fragment ensemble中的每个bookie其各自最后确认写入的数据项，并取出最新的数据项ID，然后从该点开始向前（ID更小、时间更早的方向）读取。它要确保从该点起的所有条目（可能尚未被broler B1所确认）都被复制到write quorum中。当不需要再读取和复制数据项时，ledger就完全恢复(recovered)了。</li>
+<li>B2修改ledger的状态为CLOSED</li>
+<li>B2打开一个新的ledger并开始接受写入请求。</li>
+</ol>
+<p>这种体系结构的优点在于，leader（broker）是无状态的，BookKeeper的fencing功能可以轻松地解决裂脑问题。没有裂脑，没有分歧，没有数据丢失。</p>
+<h3 id="Layer-3-Bookie物理存储"><a href="#Layer-3-Bookie物理存储" class="headerlink" title="Layer 3 - Bookie物理存储"></a>Layer 3 - Bookie物理存储</h3><p>ledger和fragment是借助ZooKeeper维护的逻辑结构。从物理上讲，数据并不保存在ledger和fragment相对应的文件中。 BookKeeper中存储的实际实现是可拔插的，并且Pulsar默认的存储实现是DbLedgerStorage.</p>
+<p>当bookie接收到写入请求时，会首先写入journal文件，这是一种WAL日志，是保证持久性的手段。之后写入到WriteCache中，WriteCache会累积数据写入，并定期排序和刷盘。</p>
+<p>写入会根据所属的ledger排序，从而相同的ledger的写入会放在一起，这有利于提高读取性能。如果所有数据按照到达的时间顺序写入磁盘，就无法利用磁盘顺序读取的速度优势了。通过聚合和排序，在ledger级别实现了按时间排序，这正是我们所需要的。</p>
+<p>WriteCache中的数据项在写入磁盘文件时还会写入索引项到RocksDB中，每个索引项保存了 (ledgerId, entryId)到(entryLogId, 文件中的偏移)的映射。在读取时先读取WriteCache，再读取ReadCache，最后读取RocksDB中的索引项进而到日志文件中读取到数据项。会读取磁盘文件时还会执行预读并更新读取缓存，以便后续请求更有可能命中缓存。</p>
+<p>此外，BookKeeper可以隔离读写的磁盘IO以提高性能，通常 journal文件和日志文件（包括索引文件）放在不同的磁盘上。<br><img src="image10.png"></p>
+<h3 id="Layer-3-Pulsar-Broker-缓存"><a href="#Layer-3-Pulsar-Broker-缓存" class="headerlink" title="Layer 3 - Pulsar Broker 缓存"></a>Layer 3 - Pulsar Broker 缓存</h3><p>每个topic都有一个Pulsar broker作为其所有者，所有的读取和写入都经由该broker，这种设计还提供了一个好处：broker可以缓存日志尾部（log tail，日志文件中较新的数据），这样对于尾读取可以不用再向BookKeeper发起读取，避免了一次网络往返和bookie可能触发的一次磁盘读取。而对于追赶读取，会读取历史数据，因此很大一部分读取会进入BookKeeper。</p>
+<h3 id="恢复协议（Recovery-Protocol）"><a href="#恢复协议（Recovery-Protocol）" class="headerlink" title="恢复协议（Recovery Protocol）"></a>恢复协议（Recovery Protocol）</h3><p>当有bookie故障时，BookKeeper会启动自动恢复（Auto Recovery）过程。自动恢复运行在多个AutoRecoveryMain进程中，其中一个会被选为Auditor。Auditor的任务是检测故障bookie，然后从ZK中读取完整的ledger列表，并查找故障节点上所有分配的ledgers，对于这些ledgers中的每一个，在ZooKeeper的/underreplicated节点下创建一个重复制任务。<br>AutoRecoveryMain进程中有一个线程会监听/underreplicated节点并执行复制任务，执行过程为：</p>
+<ol>
+<li>扫描ledger所有fragment中当前所在bookie所不具有的</li>
+<li>从其他bookie节点复制这些fragment到当前所在的bookie上，更新ZooKeeper中的ensemble信息，标记这些fragment为已复制</li>
+</ol>
+<p><img src="image11.png"></p>
+<h3 id="关于潜在数据丢失的一些初步思考"><a href="#关于潜在数据丢失的一些初步思考" class="headerlink" title="关于潜在数据丢失的一些初步思考"></a>关于潜在数据丢失的一些初步思考</h3><p>下面介绍和对比下RabbitMQ, Kafka和Pulsar中可能造成数据丢失的情况：</p>
+<ol>
+<li><p>RabbitMQ不管是Ignore或Autoheal模式下都可能发生脑裂，脑裂后丢失分区中未消费的消息就都丢失了。对于Pulsar而言，理论是不可能存在脑裂的。</p>
+</li>
+<li><p>Kafka设置acks=1且主副本所在broker故障，故障转移到ISR中的某个follower。由于acks=1，所以主副本确认后就返回客户端，但是follower可能还未复制这些数据。对于Pulsar，存储节点不分主从，只要Qw大于等于2，对于一个打开的ledger就不会因为当个节点故障而丢失数据，但是对于关闭的ledger还是有丢失数据的潜在风险。考虑以下场景：</p>
+</li>
+</ol>
+<ul>
+<li>场景1（关闭的ledger）： E = 3, Qw =2, Qa = 2. broker发送写入到两个bookies. B1和B2都向broker返回ack，broker再向客户端返回ack。之后ledger关闭，并启用一个新的ledger。如果要发生数据丢失，需要B1和B2都发生故障。如果只有一个节点故障，那么自动恢复机制会介入。（注意如果Qa=1，那么有可能恢复失败，比如最后一条写入只有一个节点ack，而故障的正是这个节点）</li>
+<li>场景2（打开的ledger）： E = 3, Qw =2, Qa = 1.  broker发送写入到两个bookies. B1向broker返回ack，broker不用等待B2的ack而直接向客户端返回ack。如果要发生数据丢失，需要同时满足broker和B1都发生故障且B2没有成功写入。如果只有B1故障，那么仍旧可以把数据写入第2个broker（在一个新的fragment中）。<br>因此，单点故障造成数据丢失只能发生在Qw=1或Qa=1的情况下，为了保证数据安全性，需要设置Qw &gt;= 2 且 Qa &gt;= 2</li>
+</ul>
+<ol start="3">
+<li>Kafka中拥有leader分区的节点从ZooKeeper中隔离。这会导致Kafka出现短期裂脑。当acks = 1时，leader将继续接受写入，直到发现无法与ZooKeeper对话，此时它将停止接受写入。同时，某个follower被提升为leader。那么当旧的leader 成为follower时，脑裂期间写入旧leader的所有消息都会丢失。当acks = all时，如果所有的follower都落后太多，从ISR中移除，那么ISR只由leader组成。 然后，leader与ZooKeeper隔离，即使已经有follower被提升为leader，旧leader仍然会在短时间内继续接受acks = all消息。那么当旧的leader成为follower时，脑裂期间写入旧leader的所有消息都会丢失。在Pulsar中存储层不会出现脑裂，任何时候只有一个broker可以对topic进行写入。新的broker会使用fencing机制隔离之前的ledger，防止旧的leader故障恢复后再次写入。</li>
+</ol>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><ol>
+<li><p><a target="_blank" rel="noopener" href="https://streaml.io/blog/messaging-storage-or-both">Messaging, storage, or both?</a></p>
+</li>
+<li><p><a target="_blank" rel="noopener" href="https://streaml.io/blog/pulsar-segment-based-architecture">Comparing Pulsar and Kafka: how a segment-based architecture delivers better performance, scalability, and resilience</a></p>
+</li>
+<li><p><a target="_blank" rel="noopener" href="https://jack-vanlightly.com/blog/2018/10/2/understanding-how-apache-pulsar-works">Understanding How Apache Pulsar Works</a></p>
+</li>
+</ol>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/" data-id="ckzldzran000ltofw3d4gfin8" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Pulasr/" rel="tag">Pulasr</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+  
+    <article id="post-译-BookKeeper简要介绍" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/" class="article-date">
+  <time datetime="2019-11-10T13:26:43.000Z" itemprop="datePublished">2019-11-10</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="article-title" href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]BookKeeper简要介绍</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <p><strong>说明：以下内容从Reference中所述的博客翻译整理而来</strong></p>
+<p>Apache BookKeeper是可扩展、容错、低延迟的日志存储服务，针对实时负载进行了优化。</p>
+<h2 id="Bookeeper中的概念"><a href="#Bookeeper中的概念" class="headerlink" title="Bookeeper中的概念"></a>Bookeeper中的概念</h2><h3 id="Records"><a href="#Records" class="headerlink" title="Records"></a>Records</h3><p>数据以一系列不可分割的记录（record）而不是字节数组的形式写入Apache BookKeeper中的日志。记录是BookKeeper中最小的I/O单位，也是寻址单位。每条记录都有一个单调递增的序列号。</p>
+<h3 id="Logs"><a href="#Logs" class="headerlink" title="Logs"></a>Logs</h3><p>BookKeeper提供了两种表示日志的存储原语：一种是ledger （log segment）；另一个是流（log stream）。基于此，BookKeeper对历史数据和实时数据提供了统一的存储抽象。<br>ledger是一系列记录，是BookKeeper中最底层的存储原语，可用于有界序列或无界流，ledger关闭后无法再次写入。<br><img src="image1.png"><br>图1. BookKeeper ledger：有界的数据序列</p>
+<p>流是无界的记录序列，默认不会终止。和ledger不同， 流可以被多次打开并写入。一个流实际上由多个ledger组成，根据基于时间或空间的滚动策略进行轮换。流主要的数据保留机制是截断，即根据基于时间或空间的保留策略丢弃最旧的ledger。<br><img src="image2.png"><br>图 2. BookKeeper stream: 无界的数据序列</p>
+<h3 id="Bookies"><a href="#Bookies" class="headerlink" title="Bookies"></a>Bookies</h3><p>BookKeeper中的存储节点称为bookie. 为了性能起见，各个bookie存储ledger的片段，而不是存储整个ledger，因此多个bookie作为一个整体对外提供服务。</p>
+<p><strong>Metadata</strong><br>BookKeeper使用zookeeper保存ledger和bookie的元数据。<br><img src="image3.png"><br>图3.BookKeeper典型安装配置</p>
+<h2 id="Replication"><a href="#Replication" class="headerlink" title="Replication"></a>Replication</h2><p>BookKeeper会把同一条记录复制到同一个数据中心（或多个数据中心）的多个节点上，通常是3个或5个。和其他系统所采用主副本或管道（pipeline）复制算法不同，BookKeeper采用并行quorum-vote复制算法，以保证可预测的低延迟。</p>
+<p><img src="image4.png"><br>图4. BookKeeper中的ensemble, write和ack quorums </p>
+<p>在上图中：</p>
+<ol>
+<li>BookKeeper集群中多个bookie节点（图中的bookie1~5）组成了一个ensemble来保存给定ledger的记录。</li>
+<li>ledger上的记录被划分到ensemble中的bookie。每条记录被保存到write quorum size参数所指定的多个节点中（图中的bookie2,3,4）。</li>
+<li>写入时，要等到接收到ack quorum size参数所指定的多个节点的确定，才认为写入成功（图中的节点3,4）。</li>
+<li>ensemble中的节点故障时，可以被其他正常的节点替换。<h3 id="Replication的核心思路"><a href="#Replication的核心思路" class="headerlink" title="Replication的核心思路"></a>Replication的核心思路</h3>BookKeeper中的复制基于以下基本思路：</li>
+<li>日志（流）是面向记录的而不是面向字节数组的。也就是说记录是数据的保存单位而不是字节数组。</li>
+<li>日志（流）中记录的顺序与记录副本的实际存储是分离的。</li>
+</ol>
+<p>这两个核心原则确保了BookKeeper复制能够提供以下特性：</p>
+<ul>
+<li>提供多种选项来将记录写到bookies中，这确保了即使集群中的许多bookies停机或运行缓慢，写入也能最终完成（只要有足够的容量来处理负载）。改变ensemble就可以做到这一点。</li>
+<li>通过增加ensemble大小来最大化单个日志（流）的带宽，以使单个日志不会局限于一台或一小组机器。这可以通过将ensemble大小配置为大于write quorum大​​小来实现。</li>
+<li>通过调整ack quorum大小来改善尾延迟。这对于确保BookKeeper的低延迟至关重要，同时仍提供一致性和持久性保证。</li>
+<li>通过多对多副本恢复提供快速复制。所有bookies都可以充当记录副本的发送者和接收者。</li>
+</ul>
+<h2 id="Durability"><a href="#Durability" class="headerlink" title="Durability"></a>Durability</h2><p>BookKeeper的持久性通过显式调用fsync和写入确认来实现。</p>
+<h2 id="Consistency"><a href="#Consistency" class="headerlink" title="Consistency"></a>Consistency</h2><p>BookKeeper提供了一个简单但强大的一致性保证——可重复读。<br>对于保存到日志中的数据：</p>
+<ul>
+<li>如果记录已经写入确认，则必定是立即可读的。</li>
+<li>如果一条记录已经被读取了一次，则必须始终可读。</li>
+<li>如果记录R成功写入，那么R及之前的记录都已成功持久化并可读。</li>
+<li>所有读取端看到的数据顺序都是一致的，并且重复读取也是一样的。</li>
+</ul>
+<p>BookKeeper的可重复读一致性是基于LastAddConfirmed (<strong>LAC</strong>) 协议完成的。</p>
+<h2 id="Availability"><a href="#Availability" class="headerlink" title="Availability"></a>Availability</h2><p>在CAP理论范畴中，BookKeeper是CP系统，但是仍然提供了很高的可用性。<br>I<br>|     <strong>可用性类型</strong>                 |    <strong>机制</strong>        |     <strong>描述</strong>            |<br>|———————-|—————–|——————————————————————————————————————-|<br>|<strong>Write availability</strong>|Ensemble changes |当bookie发生故障时，写入端将重新配置数据放置位置，这样可以确保只要集群中剩余的bookies总数足够，写入操作始终会成功。|<br>|<strong>Read availability</strong> |Speculative reads|允许读取端向ensemble中的任何节点读取数据，这有助于分散读取压力，减少尾延迟。                                       |</p>
+<h2 id="Low-latency"><a href="#Low-latency" class="headerlink" title="Low latency"></a>Low latency</h2><p>强持久性和一致性保证是分布式系统中的复杂问题，在还要满足企业级低延迟目标时尤为突出。BookKeeper通过一下方式来满足这些要求：</p>
+<ul>
+<li>在单个bookie上，不同工作负载（写入、尾读取和追赶/随机读）之间是有I/O隔离的。在journal（BookKeeper的事务日志）层级上使用 group-committing机制以平衡延迟和吞吐量。</li>
+<li>quorum-vote并行复制机制用于屏蔽网络故障、JVM垃圾回收暂停和慢速磁盘引起的延迟损耗。</li>
+<li>长轮询机制，可在写入确认后立即通知尾读取端。</li>
+</ul>
+<h2 id="I-O-isolation"><a href="#I-O-isolation" class="headerlink" title="I/O isolation"></a>I/O isolation</h2><p>在大多数消息传递系统中，慢速消费者会导致消息积压，从而可能导致总体性能下降。慢速消费者会迫使存储系统从持久性存储介质中读取数据，造成I/O抖动以及页缓存的换入换出。这源于/O组件对于写入、尾读取、追赶读取等共享同一个读写路径。BookKeeper中，对三种IO操作设计了3条不同的I/O路径。因为对于写入和尾读取要求可预测的低延迟；而对于追赶读取，吞吐量更重要。基于对这些工作负载之间的物理隔离，BookKeep可以充分利用：</p>
+<ul>
+<li>网络入口带宽和顺序写入时的磁盘写入带宽</li>
+<li>网络出口带宽和多个ledger磁盘用于读取的IOPS</li>
+</ul>
+<h2 id="Data-distribution"><a href="#Data-distribution" class="headerlink" title="Data distribution"></a>Data distribution</h2><p>构建在BookKeeper之上的服务把日志流作为分段的ledger保存在BookKeeper中，这些段可以复制到不同的bookie中。基于此获得了以下特性：</p>
+<ol>
+<li>存储容量不再受单个节点的存储容量所限制</li>
+<li>在扩展BookKeeper集群时不会发生日志流的重平衡，此外还提供了多样的放置策略，包括机架感知、区域感知和基于权重的选择等。</li>
+<li>节点故障时，缺失副本修复快速高效。</li>
+</ol>
+<p>与Kafka这种的以分区为中心的系统相比，BookKeeper的水平扩展性更具优势，在Kafka中，日志流（即Kafka分区）仅顺序存储在集群机器的子集上，并且扩展Kafka集群需要进行数据重新平衡，这是一个资源密集、容易出错且消耗很大的操作。此外，在以分区为中心的系统上，单个磁盘损坏将要求系统将整个日志流复制到新磁盘中，以满足复制要求。</p>
+<p><img src="image5.png"><br>图5. 日志流：所有日志段都复制到可配置数量（此处副本数为3）的的多个bookie中（此处为4）。日志段均匀分布以实现水平的可扩展性，且无需重平衡。</p>
+<h2 id="Scalability"><a href="#Scalability" class="headerlink" title="Scalability"></a>Scalability</h2><p>BookKeeper的扩展性在于以下几方面：</p>
+<h3 id="Number-of-ledgers-streams"><a href="#Number-of-ledgers-streams" class="headerlink" title="Number of ledgers/streams"></a>Number of ledgers/streams</h3><p>流可扩展性是指日志流存储能够支持大数量的流（从数百个到数百万个ledger和流），同时始终提供一致性能的特性。<br>实现这一目标的关键是存储格式。如果把ledger和流存储在专用文件中，将难以扩展，因为这些文件会定期从页缓存刷新到磁盘，从而I/O会分散在整个磁盘上。<br>BookKeeper以交错的存储格式将来自不同ledger和流的数据记录汇总以存储在大文件中，然后进行索引。这减少了文件数量和I/O竞争，使得BookKeeper可以扩展大量的ledger和流。</p>
+<h3 id="Number-of-bookies"><a href="#Number-of-bookies" class="headerlink" title="Number of bookies"></a>Number of bookies</h3><p>Bookie可扩展性是指通过增加更多的bookies以支持快速增长的流量的能力。在BookKeeper中，bookies之间是没有直接交互的，这使得只需添加新机器即可扩展群集。同样，基于BookKeeper在Bookies上分发数据的方式，在扩展群集时，没有高代价的、会大量占用网络和I/O带宽的分区数据重新平衡操作。</p>
+<h3 id="Number-of-clients"><a href="#Number-of-clients" class="headerlink" title="Number of clients"></a>Number of clients</h3><p>客户端可伸缩性是指日志流存储能够支持大量并发客户端，并支持大量扇出的能力。 BookKeeper基于多个方面实现此目的：</p>
+<ul>
+<li>客户端和服务端都是基于Netty实现的异步网络I/O.</li>
+<li>数据被复制到多个bookie, 客户端可以从任一副本节点读取。</li>
+<li>通过增加副本数量可以增加读取扇出能力。</li>
+</ul>
+<h3 id="Single-stream-throughput"><a href="#Single-stream-throughput" class="headerlink" title="Single stream throughput"></a>Single stream throughput</h3><p>除了通过增加流或者bookie的数量来增大吞吐量，BookKeeper中还可以通过增大ensemble的数量来提高单个流的吞吐量。</p>
+<h3 id="Operational-simplicity"><a href="#Operational-simplicity" class="headerlink" title="Operational simplicity"></a>Operational simplicity</h3><p>BookKeeper旨在简化操作复杂度。可以在系统运行时通过添加更多bookie节点来轻松扩容。如果Bookie节点不可用，则其中包含的所有记录都将标记为“待复制（under replicated）”，并且bookkeeper自动恢复守护程序会自动将数据从其他可用副本复制到新的bookies中。 BookKeeper可以将运行中的bookie节点上提供只读模式；在某些特定情况下，例如磁盘已满、磁盘损坏，bookie也会自动变为只读模式。只读模式下的Bookie将不再接受新的写操作，但仍然提供读取。这种自我修复的特性减少了许多操作上的痛点。</p>
+<h2 id="TOAB"><a href="#TOAB" class="headerlink" title="TOAB"></a>TOAB</h2><p>全序原子广播（Total Order Atomic Broadcast, TOAB）对于分布式系统来说是一个非常有用的特性。如果要构建一致性消息传递服务，则需要满足该特性。虽然不是严格要求，但实际上，如果希望在流处理系统中提供 effectively-once 或at-least-once语义，则TOAB也是必需的。</p>
+<p>具备TOAB的系统有以下特性：<br>|    <strong>Property</strong>                    |     <strong>Description</strong>                     |<br>|————————————|—————————————–|<br>|<strong>Validity</strong>           |If a correct participant broadcasts a message, then all correct participants will eventually deliver it.                                                                                                                    |<br>|<strong>Uniform Agreement</strong>  |If one correct participant delivers a message, then all correct participants will eventually deliver that message.                                                                                                          |<br>|<strong>Uniform Integrity</strong>  |A message is delivered by each participant at most once, and only if it was previously broadcast.                                                                                                                           |<br>|<strong>Uniform Total Order</strong>|The messages are totally ordered in the mathematical sense; that is, if any correct participant delivers message 1 first and message 2 second, then every other correct participant must deliver message 1 before message 2.|</p>
+<p>更简洁地说，TOAB 意味着：</p>
+<ul>
+<li>没有消息丢失</li>
+<li>没有重复</li>
+<li>没有重排序<br>众所周知，TOAB与分布式系统中的共识是等效的。</li>
+</ul>
+<p>有许多实现了TOAB的著名开源项目，比如ZooKeeper，etcd和Consul。但是，由于各种原因，这些实现无法扩展，因为它们只提供一个复制日志。向系统添加新节点只会增加广播一条消息所需的通信，也就是说是不可扩展的。</p>
+<h3 id="BookKeeper-TOAB实现原理"><a href="#BookKeeper-TOAB实现原理" class="headerlink" title="BookKeeper TOAB实现原理"></a>BookKeeper TOAB实现原理</h3><p>一个ledger只有一个可以添加记录的写入者。这样使得可以很容易就能提供Uniform Total Order 和Uniform Integrity，因为写入的时候每个记录都会分配一个ID.<br>提供Validity 和Uniform Agreement 特性则略显复杂。为了提供Validity，需要确保，如果一个记录已经确认写入，那么从ledger就能读取到该条目。Uniform Agreement 要求所有之后的读取程序都能看到完全相同的一组消息。</p>
+<p>当写入者正常运行时，提供这些特性是直白的。写入者知道哪些条目已被ack quorum确认，并将此信息作为显式消息或附加在后续记录上，发送给ensemble中的各个bookie。 此信息称为last add confirmed（LAC），类似于Zab或Raft中的提交阶段。ledger的读取者可以读取直到LAC的记录，同时bookKeeper向它们保证，它们读取到的任何记录最终都能被所有其他读取程序所读取。</p>
+<h3 id="Handling-write-crashes"><a href="#Handling-write-crashes" class="headerlink" title="Handling write crashes"></a>Handling write crashes</h3><p>当写入者发 生故障时事情变得复杂，写入的记录可能是以下情况：</p>
+<ol>
+<li>已经被ack quorum确认，但是还未作为LAC发送。</li>
+<li>已经被ack quorum确认，但是写入者没有接收到该确认消息</li>
+<li>少于ack quorum个bookie确认写入。</li>
+</ol>
+<p>问题是，在发生故障时这三种情况是无法区分出来的。在情况1中，为了提供Validity，必须保存所有的读取者都能读取到已确认的记录。在情况2和3中，为了提供Uniform Agreement，所有读取者需要对保留哪些记录达成一致。</p>
+<p>解决这些问题的方法是关闭ledger。当关闭一个ledger时，需要决定哪条记录是最后一条记录，并达成共识后写入该决定，之后该决定就一直保持不变。<br>多个读取者可能会同时尝试关闭ledger。每个读取者都使用恢复机制来找出ledger的最后一个条目。虽然不能保证每个读取者都从恢复机制中收到相同的最后一条记录（因为每个读取者连接的bookie不同），但是可以保证所有读取者至少会看到写入者所确认的最后一个条目。</p>
+<p>为了解决多个读取者从恢复机制读取到不同的结果，每个读取者需要把读取结果使用CAS方式写入zookeeper，只有一个写入能成功，写入失败的读取者读取成功写入的结果作为ledger正确的结尾记录。</p>
+<p><img src="image6.png"><br>图6. 两个读取者 <strong>R1</strong> 和<strong>R2</strong>，从ledger<strong>1</strong>恢复. <strong>R1</strong>可以看到记录3，但是<strong>R2</strong>不能，所以<strong>R1</strong>和<strong>R2</strong>恢复时会提出不同的最后记录。</p>
+<h3 id="Rounding-out-the-properties"><a href="#Rounding-out-the-properties" class="headerlink" title="Rounding out the properties"></a>Rounding out the properties</h3><p>我们还需要考虑到没有完美的故障检测器这一事实。这意味着读取者可能会在写入者还活着的时候尝试恢复并关闭ledger，这通常发生于写入者出现网络分区时。</p>
+<p>为了确保Validity，需要确保一旦读取者开始恢复一个ledger，那么写入者就不能再向该ledger加入记录。因为这之后加入的记录是保存到已确认的最后一条记录后面，没有读取者可以读取到这些记录。</p>
+<p>为解决此问题，BookKeeper在恢复开始时引入了防护（fencing）机制。系统会将fencing消息发送给ledger的write quorum中的每个bookie，告诉它们不再确认该ledger的任何新消息。一旦fencing消息在每个ack quorum被至少一个bookie确认，之后ack qurom就不会确认任何新写入的记录，从而写入者就无法确认写入任何新记录。</p>
+<p>Fencing和恢复机制提供了Validity特性，最后的CAS写入到ZooKeeper，设置了ledger最后记录的不可变性，提供了Uniform Agreement特性。从而TOAB要求的所有特性都满足了。</p>
+<h3 id="Multiple-ledgers"><a href="#Multiple-ledgers" class="headerlink" title="Multiple ledgers"></a>Multiple ledgers</h3><p>单单一个ledger的用处有限，因为它只有一个writer，如果该writer崩溃，就不能向ledger中添加任何其他内容。但是，要用作消息传递或状态机复制的复制日志，需要能够在崩溃后重新打开日志并重新开始添加新的日志条目，这通常是通过使用ZooKeeper完成的。下面将描述ApachePulsar是如何维护Topic消息日志的，但是这种方法其实是通用的，可以在其他应用程序中使用。但是我们建议使用DistributedLog，而不是自己去实现这个模式。DistributedLog是BookKeeper的高级客户端，封装了使用BookKeeper时的一些棘手的问题。</p>
+<h3 id="TOAB-at-work-Apache-Pulsar-topics"><a href="#TOAB-at-work-Apache-Pulsar-topics" class="headerlink" title="TOAB at work: Apache Pulsar topics"></a>TOAB at work: Apache Pulsar topics</h3><p>在Pulsar中，一个Topic的消息日志由一系列ledger组成。当一个Pulasr broker分配到一个topic，它从ZooKeeper读取该topic的ledger序列。在可以发布消息到该topic之前，需要保证最后一个ledger已经关闭了。然后，创建一个新ledger，并加入到该序列中，使用CAS向ZooKeeper中写入该ledger的序列号。<br><img src="image7.png"><br>图7. Pulsar topic中的消息日志，是一系列的ledger</p>
+<p>通过在ZooKeeper中存储ledger序列号，我们得到了序列号的TOAB保证。再加上ledger本身提供的TOAB保证，这意味着pulsar topic也具备了TOAB。由于DistributedLog使用了相同的模式，所以DistributedLog也可以提供TOAB。</p>
+<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><p><a target="_blank" rel="noopener" href="https://streaml.io/blog/intro-to-bookkeeper">https://streaml.io/blog/intro-to-bookkeeper</a><br><a target="_blank" rel="noopener" href="https://streaml.io/blog/why-apache-bookkeeper">https://streaml.io/blog/why-apache-bookkeeper</a><br><a target="_blank" rel="noopener" href="https://streaml.io/blog/why-bookkeeper-part-2">https://streaml.io/blog/why-bookkeeper-part-2</a><br><a target="_blank" rel="noopener" href="https://streaml.io/blog/bookkeeper-toab">https://streaml.io/blog/bookkeeper-toab</a></p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/" data-id="ckzldzrav0011tofw6345398m" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/BookKeeper/" rel="tag">BookKeeper</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+  
+    <article id="post-HBase源码阅读随笔1-RPC框架" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/11/02/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%941-RPC%E6%A1%86%E6%9E%B6/" class="article-date">
+  <time datetime="2019-11-02T15:44:16.000Z" itemprop="datePublished">2019-11-02</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="article-title" href="/2019/11/02/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%941-RPC%E6%A1%86%E6%9E%B6/">HBase源码阅读随笔1-RPC框架</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <p>不管是RegionServer还是HMaster在启动的时候都会启动RPC服务，比如RegionServer在启动的时候就会实例化RSRPCServices对象，其中会启动一个RpcServer，默认是基于Netty实现的NettyRpcServer。HBase RPC的流程框架如下：<br><img src="rpc-archi.png" alt="rpc流程结构"></p>
+<p>其中各个Executor用于执行具体请求逻辑，其类继承关系图如下：<br><img src="executor.png" alt="executor类图"><br>抽象类RpcExecutor封装了大部分的属性和方法，最主要的两个属性是用于暂存请求的队列和处理请求的handler。一个handler是一个线程，数量由配置参数hbase.regionserver.handler.count决定，默认为30。队列的数量为handlerCount * hbase.ipc.server.callqueue.handler.factor(0~1.0f之间)，所以队列数量是小于等于handler数量。在启动RpcServer的过程中会调用startHandlers()方法启动Handler线程，同时每个Handler线程会绑定到某个队列上。</p>
+<p>BalancedQueueRpcExecutor实现了抽象的dispatch()方法，主要是利用QueueBalancer会请求投递到RpcExecutor的某个队列中。QueueBalancer就是一个负载均衡器，当前主要有一个实现RandomQueueBalancer，顾名思义就是随机选择一个队列进行投递。</p>
+<p>FastPathBalancedQueueRpcExecutor继承自BalancedQueueRpcExecutor，它有一个fastPathHandlerStack属性，该属性中保存了空闲的Handler线程（对应的队列中没有未处理的请求）。在分发请求时，如果fastPathHandlerStack不为空，则从中取出一个handler，直接分配请求，这样就避免了入队和出队操作，提高了效率。</p>
+<p>队列也有三种类型：</p>
+<ul>
+<li>fifo: 普通的队列，使用LinkedBlockingQueue类</li>
+<li>deadline: 优先级队列，相同优先级的元素遵循fifo，使用BoundedPriorityBlockingQueue类（看代码不算一个高效的实现）</li>
+<li>codel: 控制时延队列。如果在过去codelInterval时间内，最小时延（当前时间-请求接受时间）大于阈值codelTargetDelay，则认为当前已经过载（isOverloaded），此时如果待分发的请求时延已经超过2*codelTargetDelay，则丢弃该请求。此外，如果队列的使用率大于阈值lifoThreshold，则会采用filo代替fifo.</li>
+</ul>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/11/02/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%941-RPC%E6%A1%86%E6%9E%B6/" data-id="ckzldzraj000dtofwfz0b839q" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+  
+    <article id="post-Cassandra源码阅读随笔9-ANTI-ENTROPY-REPAIR" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/10/24/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%949-ANTI-ENTROPY-REPAIR/" class="article-date">
+  <time datetime="2019-10-24T13:18:21.000Z" itemprop="datePublished">2019-10-24</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="article-title" href="/2019/10/24/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%949-ANTI-ENTROPY-REPAIR/">Cassandra源码阅读随笔9. ANTI-ENTROPY REPAIR</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <p>我们知道Cassandra不是一个强一致性，而是最终一致性的系统，各个副本数据可能存在不一致的情况。在前文中已经提到了两种处理不一致数据<br>的方法——读取修复（Read Repair）和提示移交（Hinted Handoff），现在来看下另外一种称为逆熵（Anti-Entropy）的方法，通常逆熵是<br>在日常维护中使用nodetool repair命令来触发。</p>
+<p>nodetool命令处理的入口是NodeCmd，通过层层调用在StorageService的createRepairTask()方法中生成一个异步任务，该任务中又根据token range进行切分成多个子任务，最终一个range的repair操作封装在RepairSession类中，该类的注释中对repaire的过程进行了说明，概要如下：</p>
+<blockquote>
+<p>对于给定的range，RepairSession修复各个comlumnfamiliy的多个数据副本，每个comlumnfamiliy对应一个RepairJob。<br>一个RepairJob主要由2个阶段组成：</p>
+<ol>
+<li>验证阶段（Validation phase）：向每个副本请求merkle tree，并等待收到数据</li>
+<li>同步阶段（Synchonization phase）：对于接收到mekle tree中每一个tree，和其他tree做对比，如果不相等，就开启一个streamingRepair。</li>
+</ol>
+<p>对于给定的session，每个repair job的第一阶段是顺序执行的，这样可以保证对于某个副本同时只有一个merkle tree在创建，这也保证了对于某个columnfamily各个副本差不多在同一个时间开始创建merkle tree。</p>
+<p>RepairJob的执行有2种模式：是否顺序的。如果是顺序的，则会向各个副本依次请求merkle tree数据，否则会并发请求。</p>
+</blockquote>
+<p>下面看下RepairSession的runMayThrow()方法，该方法主要是针对每个cf创建一个RepairJob，并开始第一个job.</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br></pre></td><td class="code"><pre><span class="line">public void runMayThrow() throws Exception &#123;</span><br><span class="line">        logger.info(String.format(&quot;[repair #%s] new session: will sync %s on range %s for %s.%s&quot;,</span><br><span class="line">                getId(), repairedNodes(), range, keyspace, Arrays.toString(cfnames)));</span><br><span class="line"></span><br><span class="line">        if (endpoints.isEmpty()) &#123; // 为空，直接返回，只有复制因子=1时才满足</span><br><span class="line">            differencingDone.signalAll();</span><br><span class="line">            logger.info(String.format(&quot;[repair #%s] No neighbors to repair with on range %s: session completed&quot;, getId(), range));</span><br><span class="line">            return;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        // 有节点故障直接抛异常</span><br><span class="line">        for (InetAddress endpoint : endpoints) &#123;</span><br><span class="line">            if (!FailureDetector.instance.isAlive(endpoint)) &#123;</span><br><span class="line">                String message = String.format(&quot;Cannot proceed on repair because a neighbor (%s) is dead: session failed&quot;, endpoint);</span><br><span class="line">                differencingDone.signalAll();</span><br><span class="line">                logger.error(String.format(&quot;[repair #%s] &quot;, getId()) + message);</span><br><span class="line">                throw new IOException(message);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        ActiveRepairService.instance.addToActiveSessions(this);</span><br><span class="line">        try &#123;</span><br><span class="line">            // 每个cf创建一个job并入队</span><br><span class="line">            for (String cfname : cfnames) &#123;</span><br><span class="line">                RepairJob job = new RepairJob(this, id, keyspace, cfname, range, parallelismDegree, taskExecutor);</span><br><span class="line">                jobs.offer(job);</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            jobs.peek().sendTreeRequests(endpoints); //开始第一个job</span><br><span class="line"></span><br><span class="line">            // block whatever thread started this session until all requests have been returned:</span><br><span class="line">            // if this thread dies, the session will still complete in the background</span><br><span class="line">            completed.await();</span><br><span class="line">            if (exception == null) &#123;</span><br><span class="line">                logger.info(String.format(&quot;[repair #%s] session completed successfully&quot;, getId()));</span><br><span class="line">            &#125; else &#123;</span><br><span class="line">                logger.error(String.format(&quot;[repair #%s] session completed with the following error&quot;, getId()), exception);</span><br><span class="line">                throw exception;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125; catch (InterruptedException e) &#123;</span><br><span class="line">            throw new RuntimeException(&quot;Interrupted while waiting for repair.&quot;);</span><br><span class="line">        &#125; finally &#123;</span><br><span class="line">            // mark this session as terminated</span><br><span class="line">            terminate();</span><br><span class="line">            ActiveRepairService.instance.removeFromActiveSessions(this);</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>RepairJob的sendTreeRequests()方法主要是向各个节点发送ValidationRequest请求，如果job的模式不是并发的，则会先向各个节点发送创建快照的命令，并等待快照生成完毕才会开始发送ValidationRequest请求。</p>
+<p>节点对RepaireMessage消息的处理是在RepairMessageVerbHandler类中，先看对ValidationRequest的处理如下，会调用submitValidation提交一个任务。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">ValidationRequest validationRequest = (ValidationRequest) message.payload;</span><br><span class="line">// trigger read-only compaction</span><br><span class="line">ColumnFamilyStore store = Keyspace.open(desc.keyspace).getColumnFamilyStore(desc.columnFamily);</span><br><span class="line">Validator validator = new Validator(desc, message.from, validationRequest.gcBefore);</span><br><span class="line">CompactionManager.instance.submitValidation(store, validator);</span><br></pre></td></tr></table></figure>
+<p>Validation的主要过程如下，首先构建了类似于compaction过程的数据迭代器，然后依此利用每条数据构建merkle tree.</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br></pre></td><td class="code"><pre><span class="line">private void doValidationCompaction(ColumnFamilyStore cfs, Validator validator) throws IOException &#123;</span><br><span class="line"></span><br><span class="line">    if (!cfs.isValid())</span><br><span class="line">        return;</span><br><span class="line"></span><br><span class="line">    Collection&lt;SSTableReader&gt; sstables;</span><br><span class="line">    String snapshotName = validator.desc.sessionId.toString();</span><br><span class="line">    int gcBefore;</span><br><span class="line">    boolean isSnapshotValidation = cfs.snapshotExists(snapshotName);</span><br><span class="line">    if (isSnapshotValidation) &#123; // 读取快照，如果repairJob是sequential的，会先进行快照</span><br><span class="line">        sstables = cfs.getSnapshotSSTableReader(snapshotName);</span><br><span class="line">        gcBefore = cfs.gcBefore(cfs.getSnapshotCreationTime(snapshotName));</span><br><span class="line">    &#125; else &#123;</span><br><span class="line">        // flush first so everyone is validating data that is as similar as possible</span><br><span class="line">        StorageService.instance.forceKeyspaceFlush(cfs.keyspace.getName(), cfs.name);</span><br><span class="line">        sstables = cfs.markCurrentSSTablesReferenced();</span><br><span class="line">        if (validator.gcBefore &gt; 0)</span><br><span class="line">            gcBefore = validator.gcBefore;</span><br><span class="line">        else</span><br><span class="line">            gcBefore = getDefaultGcBefore(cfs);</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    // 获取用于计算的数据是和compaction的过程类似的</span><br><span class="line">    CompactionIterable ci = new ValidationCompactionIterable(cfs, sstables, validator.desc.range, gcBefore);</span><br><span class="line">    CloseableIterator&lt;AbstractCompactedRow&gt; iter = ci.iterator();</span><br><span class="line">    metrics.beginCompaction(ci);</span><br><span class="line">    try &#123;</span><br><span class="line">        // validate the CF as we iterate over it</span><br><span class="line">        validator.prepare(cfs); // 初始化merkle tree</span><br><span class="line">        while (iter.hasNext()) &#123;</span><br><span class="line">            if (ci.isStopRequested())</span><br><span class="line">                throw new CompactionInterruptedException(ci.getCompactionInfo());</span><br><span class="line">            AbstractCompactedRow row = iter.next();</span><br><span class="line">            validator.add(row); </span><br><span class="line">        &#125;</span><br><span class="line">        validator.complete();</span><br><span class="line">    &#125; finally &#123;</span><br><span class="line">        iter.close();</span><br><span class="line">        SSTableReader.releaseReferences(sstables);</span><br><span class="line">        if (isSnapshotValidation) &#123;</span><br><span class="line">            cfs.clearSnapshot(snapshotName);</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        metrics.finishCompaction(ci);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+<p>在 validator.prepare()中主要进行了merkle tree的初始化和生成TreeRange迭代器。merkle tree的初始化代码如下，可以发现merkle tree是一棵高度固定的完美二叉树，左右子树把range平分为二。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">public void init() &#123; // 初始化整棵树，设置每个树节点的范围</span><br><span class="line">    // determine the depth to which we can safely split the tree</span><br><span class="line">    byte sizedepth = (byte) (Math.log10(maxsize) / Math.log10(2));</span><br><span class="line">    byte depth = (byte) Math.min(sizedepth, hashdepth);</span><br><span class="line"></span><br><span class="line">    root = initHelper(fullRange.left, fullRange.right, (byte) 0, depth);</span><br><span class="line">    size = (long) Math.pow(2, depth);</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">// 把给定范围初始化为树结构</span><br><span class="line">private Hashable initHelper(Token left, Token right, byte depth, byte max) &#123;</span><br><span class="line">    if (depth == max)</span><br><span class="line">        // we&#x27;ve reached the leaves</span><br><span class="line">        return new Leaf();</span><br><span class="line">    Token midpoint = partitioner.midpoint(left, right);</span><br><span class="line"></span><br><span class="line">    if (midpoint.equals(left) || midpoint.equals(right))</span><br><span class="line">        return new Leaf();</span><br><span class="line"></span><br><span class="line">    Hashable lchild = initHelper(left, midpoint, inc(depth), max); // 递归</span><br><span class="line">    Hashable rchild = initHelper(midpoint, right, inc(depth), max);</span><br><span class="line">    return new Inner(midpoint, lchild, rchild);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>TreeRange迭代器就是merkle tree的叶子节点所对应range的递增迭代器，因为merkle tree中节点保存的哈希值是从最底层的叶节点开始的，叶节点保存的是数据的哈希值，内部节点是子节点哈希值的哈希值，内部节点的哈希值是延迟计算的。</p>
+<p>有了数据的迭代器和TreeRange的迭代器，那么就可以进行把数据计算哈希值加入到对应的range里面，也就是validation的add()方法。当所有数据迭代完成后，向发起ValidationRequest请求的节点回复ValidationComplete消息。</p>
+<p>发起Repaire的节点在收到ValidationComplete消息后，调用RepaireSession的validationComplete()方法把结果保存到trees连表中。如果模式不是并发的，则向下一个节点发起ValidationRequest请求。如果收到所有节点的ValidationComplete消息，则调用RepaireJob的submitDifferencers()方法，针对每一对merkle tree生成一个Differencer对象，Differencer实现了Runaable接口，run()方法如下，首先根据Merkel tree计算不一致的range存入diferences，如果diferences为空，说明两个节点的数据一致，向本节点（本节点作为整个过程的协调节点）发送SyncComplete消息；否则的话，则两个节点数据不一致，需要执行修复操作。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">public void run() &#123;</span><br><span class="line">    // 计算不一致的range</span><br><span class="line">    differences.addAll(MerkleTree.difference(r1.tree, r2.tree));</span><br><span class="line"></span><br><span class="line">    // choose a repair method based on the significance of the difference</span><br><span class="line">    String format = String.format(&quot;[repair #%s] Endpoints %s and %s %%s for %s&quot;,</span><br><span class="line">            desc.sessionId, r1.endpoint, r2.endpoint, desc.columnFamily);</span><br><span class="line">    if (differences.isEmpty()) &#123; // 两者数据一致</span><br><span class="line">        logger.info(String.format(format, &quot;are consistent&quot;));</span><br><span class="line">        // send back sync complete message</span><br><span class="line">        MessagingService.instance().sendOneWay(</span><br><span class="line">                new SyncComplete(desc, r1.endpoint, r2.endpoint, true).createMessage(), FBUtilities.getLocalAddress());</span><br><span class="line">        return;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    // 执行repair</span><br><span class="line">    logger.info(String.format(format, &quot;have &quot; + differences.size() + &quot; range(s) out of sync&quot;));</span><br><span class="line">    performStreamingRepair();</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>在performStreamingRepair()方法中会生成一个StreamingRepairTask，该任务只要是让两个节点互相发送不一致range的数据。[TODO sstable streaming]</p>
+<p>当发送和接受的stream都成功完成，向协调节点发送SyncComplete消息。如果某个job收到收到differencer的SyncComplete消息，则job结束。如果所有的job结束，那么整个逆熵修复过程完成。从整个过程看，逆熵修复是一个消耗很大的过程，不管是计算merkle tree，还是发送数据流都会产生大量的IO操作，因为对整个系统的影响肯定是很大的。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/10/24/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%949-ANTI-ENTROPY-REPAIR/" data-id="ckzldzrag0008tofw7mwed8q1" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+  
+    <article id="post-Cassandra源码阅读随笔8-Gossip协议和故障检测" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/10/16/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%948-Gossip%E5%8D%8F%E8%AE%AE%E5%92%8C%E6%95%85%E9%9A%9C%E6%A3%80%E6%B5%8B/" class="article-date">
+  <time datetime="2019-10-16T10:17:33.000Z" itemprop="datePublished">2019-10-16</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="article-title" href="/2019/10/16/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%948-Gossip%E5%8D%8F%E8%AE%AE%E5%92%8C%E6%95%85%E9%9A%9C%E6%A3%80%E6%B5%8B/">Cassandra源码阅读随笔8. Gossip协议和故障检测</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <p>Cassandra集群中各节点通过Gossip协议交换信息，也据此判断节点状态以完成成员管理。Gossip协议是一种去中心化的广播协议， 工作流程类似于流行病的传播，可以证明仅需 <em>O(log(n))</em> 个回合，信息就可以传递到所有节点<sup>1</sup>。</p>
+<p>Gossip协议的实现在org.apache.cassandra.gms包中，最主要的类是Gossiper，在该类的注释中已经解释了Gossiper的大致工作流程：</p>
+<blockquote>
+<p>此模块负责对本结点的消息进行gossip形式的传递。该实现中维护了存活节点和死亡节点的列表。该模块会周期性地，比如每隔1秒，随机选择一个节点开始gossip协议流程。gossip协议流程包含3次消息交换。比如现在节点A向节点B启动一轮gossip协议，节点A向节点B发送一个GossipDigestSynMessage消息。节点B收到消息后，回复一个GossipDigestAckMessage确认消息。节点A收到节点B的确认消息后，再向节点B发送一个GossipDigestAck2Message来结束此次的gossip流程。该模块在收到以上三种消息的任一种时，就会更新故障检测器（Failure Detector）中的节点活性（liveness）信息。当接收到一个GossipShutdownMessage消息时，该模块会立即在故障检测器中把对应节点的状态设置为下线。</p>
+</blockquote>
+<p>从上面说明中可以发现，一轮gossip协议过程类似于TCP的三次握手。</p>
+<h2 id="节点启动加入哈希环的过程"><a href="#节点启动加入哈希环的过程" class="headerlink" title="节点启动加入哈希环的过程"></a>节点启动加入哈希环的过程</h2><p>在Cassandra的启动过程中会调用StorageService的initServer()方法，该方法又会调用prepareToJoin()方法，该方法中会调用Gossiper类的start()方法来启动Gossiper单例，主要是初始化自身的状态信息和启动了一个定时为1秒的定时任务GossipTask。如果启动的节点不是种子节点，则还会先调用checkForEndpointCollision()方法检查是否有地址冲突，该方法中会启动一轮”shadow” gossip，向所有种子节点发送不携带节点信息的GossipDigestSyn消息，然后从种子节点ACK消息中获取到当前集群中的节点信息，判断是否已经有和本节点相同地址的其他节点，若有则抛异常。在checkForEndpointCollision()方法的最后会清除所有获取的节点状态信息。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line">private void prepareToJoin() throws ConfigurationException &#123;</span><br><span class="line">     if (!joined) &#123;</span><br><span class="line">         Map&lt;ApplicationState, VersionedValue&gt; appStates = new HashMap&lt;&gt;();</span><br><span class="line"></span><br><span class="line">         if  &#123;</span><br><span class="line">             ......</span><br><span class="line">         &#125; else if (shouldBootstrap()) &#123;</span><br><span class="line">             checkForEndpointCollision(); // 检查地址冲突</span><br><span class="line">         &#125;</span><br><span class="line">         </span><br><span class="line">         ......</span><br><span class="line"></span><br><span class="line">         Gossiper.instance.register(this);</span><br><span class="line">         Gossiper.instance.start(SystemKeyspace.incrementAndGetGeneration(), appStates); // 启动Gossiper</span><br><span class="line">         // gossip snitch infos (local DC and rack)</span><br><span class="line">         gossipSnitchInfo();</span><br><span class="line">         // gossip Schema.emptyVersion forcing immediate check for schema updates (see MigrationManager#maybeScheduleSchemaPull)</span><br><span class="line">         Schema.instance.updateVersionAndAnnounce(); // Ensure we know our own actual Schema UUID in preparation for updates</span><br><span class="line"></span><br><span class="line">         if (!MessagingService.instance().isListening())</span><br><span class="line">             MessagingService.instance().listen(FBUtilities.getLocalAddress());</span><br><span class="line">         LoadBroadcaster.instance.startBroadcasting();</span><br><span class="line"></span><br><span class="line">         HintedHandOffManager.instance.start();</span><br><span class="line">         BatchlogManager.instance.start();</span><br><span class="line">     &#125;</span><br><span class="line"> &#125;</span><br></pre></td></tr></table></figure>
+<p>之后，会进入joinTokenRing()方法，顾名思义，此方法中会把正在启动的节点加入到哈希环中，主要步骤如下：</p>
+<ol>
+<li>在system.local中写入正在启动对应的状态BootstrapState.IN_PROGRESS</li>
+<li>生成初始的num_tokens（默认为256）个随机token</li>
+<li>向本节点的状态信息中加入STATUS和TOKEN对应的信息，并回调相关订阅者。其中STATUS信息的添加会触发StorageService中的回调方法，并进入handleStateBootstrap()方法中。该方法会把产生的token放入TokenMetadata的bootstrapTokens中，在放入前还会检测是否有token冲突。之后向PendingRangeCalculatorService提交一个更新token range的任务。</li>
+<li>实例化Bootstrapper对象，并调用其bootstrap()方法，该方法主要是为了向其他节点拉取分配到本节点上的数据，具体步骤如下：<ul>
+<li>计算节点生成的token对应的pending range</li>
+<li>对一个pending range计算落在当前哪个range内（因为是节点加入，所以pending range肯定在原来各个节点的某些range内部），并记录对应的节点</li>
+<li>向各个节点请求对应的pending range的数据以保存为本地的sstable文件，该过程会同步等待直到完成。[TODO数据的拉取streaming包的说明]</li>
+</ul>
+</li>
+<li>把生成的token保存到system.local中，更新tokenMetadata中的数据。更新本节点的应用状态，主要是应用的状态改为NORMAL，并进入StorageService的回调的具体的处理方法handleStateNormal()。<ul>
+<li>把部分应用状态保存到system.peers中</li>
+<li>更新tokenMetadata（前面已经执行过，但是该方法会在不同的地方回调，比如其他节点接收到本节点的Normal状态更新的消息也会回调该方法，并把本节点的token值保存到它的本地）</li>
+<li>处理要移除的节点（要移除的节点是没有分配任务token的节点，比如一个节点被某个新节点替代）</li>
+<li>token存入system.peers中</li>
+</ul>
+</li>
+</ol>
+<p>至此节点加入哈希环的步骤完成，如果此时我们在种子上运行nodetool status查看节点状态，就可以看到新加入的节点即状态为UN(UP/NORMAL)，因为在加入之前就启动了Gossiper，新加入节点的信息会及时传播到整个集群。</p>
+<h3 id="关于pendingrange"><a href="#关于pendingrange" class="headerlink" title="关于pendingrange"></a>关于pendingrange</h3><p>在有节点离开、加入、移动时，哈希环上token range的分布会改变，如果同时有多个节点发生这种变化那么token range的计算就会很复杂，cassandra中的实现是把多个这些操作作批处理，具体的计算逻辑在calculatePendingRanges()方法中，遵循的原则是在变化过程中保留最大可能的range，宁可写入多余的数据，也不能丢失可能的数据写入，多余的数据可以在之后进行清除，具体的解释参考该方法的注释。</p>
+<p>这些变动的range会保存到tokenMetadata的pendingRanges中，在执行写入的时候会查询写入的数据会不会落入到这些range，如果满足的话，则把写入的数据也发给对应的节点。</p>
+<h2 id="Gossip协议的实现"><a href="#Gossip协议的实现" class="headerlink" title="Gossip协议的实现"></a>Gossip协议的实现</h2><p>Gossiper交换的消息都是有版本信息的，由generation和version两部分组成，其中generation是启动的时候从system.local中查询是否有保存的generation，如果不存在或小于当前时间戳（以秒为单位）时，则使用当前的时间戳，否则使用已保存的generation。对于某个节点，其自身的generation在以运行过程中是不变的，只有在重启之后才变化。</p>
+<p>在GossipTask的run方法中，首先递增自身状态的version，然后把所有节点的状态信息放到一个打乱的列表中并组装成GossipDigestSyn消息。创建好消息之后，就会选择一个目标进行发送：</p>
+<ol>
+<li><p>先随机选择一个存活的节点发送该消息</p>
+</li>
+<li><p>按照一定的概率随机选择一个不可达的节点发送消息以检测其是否恢复，概率的计算方式如下：</p>
+ <figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">// prob的意义很明显，不可达的节点越多，探测的机率就要越大</span><br><span class="line">double prob = unreachableEndpointCount / (liveEndpointCount + 1); // + 1 是规避0的情况</span><br><span class="line">double randDbl = random.nextDouble();</span><br><span class="line">if (randDbl &lt; prob)</span><br><span class="line">    sendGossip(message, unreachableEndpoints.keySet());</span><br></pre></td></tr></table></figure></li>
+<li><p>如果第一步选择的节点不是种子节点或者当前存活的节点的数小于种子节点的数量，则会根据一定的概率随机选择一个种子节点发送消息。</p>
+</li>
+</ol>
+<p>最后进行状态检测：</p>
+<ol>
+<li><p>如果还有未处理完的接受的GOSSIP相关消息，且最近一次处理的GOSSIP消息距离现在小于1秒（即GossipTask的执行间隔时间），那么睡眠100ms。再次检查最新一次处理的GOSSIp消息距离现在的时间间隔，如果还是小于1秒直接返回。[TODO 说明本节点处理消息的速度太慢 ???]</p>
+</li>
+<li><p>对本地所保存的节点信息进行遍历，遍历过程中先调用FailureDetectore的interpret()方法检测其状态，如果FailureDetector认为该节点发生故障，则会回调Gossiper的convict()方法，该回调方法会把节点从liveEndpoints转移到unreachableEndpoints，并设置状态isAlive=false。如果该节点的expireTime(TODO)小于当前时间，则会调用evictFromMembership()方法，把该节点从unreachableEndpoints、endpointStateMap和expireTimeEndpointMap中都移除，同时放入justRemovedEndpoints中，在此后的QUARANTINE_DELAY时间内，即使接收到有关该节点的信息，也会忽略。这是为了防止在把移除该节点的消息广播到所有节点时，该节点被错误地复活。</p>
+</li>
+</ol>
+<p>下面具体来看一轮Gossip协议详细的处理过程：</p>
+<ol>
+<li><p>节点A向节点B发送GossipDigestSynMessage消息，消息中gDigests保存的是节点A所记录的各节点状态的摘要GossipDigest，GossipDigest主要有三个属性：节点地址endpoint、节点的generation和节点的maxVersion.</p>
+</li>
+<li><p>节点B接收到消息时，调用GossipDigestSynVerbHandler类（在初始化StorageService的时候会在MessageService中注册各种消息的handler）的doVerb()方法进行处理，其中最主要的逻辑是根据generation和version计算出节点A和节点B所保存的节点信息的差异，并封装成GossipDigestAck消息返回给节点A。GossipDigestAck类中，gDigestList属性是节点A拥有的更新的节点状态的摘要信息，epStateMap属性是节点B拥有的更新的节点状态的详细信息。</p>
+</li>
+<li><p>节点A收到GossipDigestAck消息后，在GossipDigestAckVerbHandler的doVerv进行处理。如果消息中的epStateMap不为空，则对其中每一项，记&lt;节点X, X-EndpintState&gt;，先更新节点X在FailureDetector中的采样信息。如果节点A没有节点X的相关信息（新节点加入），或者节点A记录的generation比X-EndpintState中的小（节点重启），则调用handleMajorStateChange()处理。如果两者的generation相等，X-EndpintState中的version更大，则调用applyNewStates()处理（更新本地缓存的节点信息，并进行回调）。如果消息中的gDigestList不为空，则找出节点A所保存的相应节点的详细的状态信息，然后保存GossipDigestAck2中，并发送给节点B。</p>
+</li>
+<li><p>节点B收到GossipDigestAck2消息后，采用和节点A相同的逻辑处理其中的epStateMap。</p>
+</li>
+</ol>
+<p>从这里可以看出两轮ACK主要是为了交换双方各自所拥有的更新的数据来进行本节点的状态数据和FailureDetectore的采样数据。</p>
+<h2 id="故障检测器"><a href="#故障检测器" class="headerlink" title="故障检测器"></a>故障检测器</h2><p>Cassandra中FailureDetectore的设计是参考”The Phi Accrual Failure Detector”文章设计的，其基本思路是根据历史数据（滑动窗口）判断在当前时刻节点发生故障的概率，如果概率大于某个值则认为确实发生故障。采用方式的根据原因是网络本身是抖动的，如果心跳超时就认为对方故障，那么显然是由可能误判的，所以需要做的是尽量减少误判的概率。</p>
+<p>Cassandra中计算发生故障的概率的方式如下<sup>2</sup>：</p>
+<blockquote>
+<p>记P_later为在当前时刻节点B发生故障的概率，那么P_later取值如下</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">&gt;P_later(t) = 1 - F(t)</span><br></pre></td></tr></table></figure>
+<p>其中F(t)表示到从开始一轮Gossip协议到现在间隔时间t内收到回复消息的概率，那么1-F(t)就是未收到回复消息的概率，也就是说节点发生故障的概率。假设回复事件的达到满足指数分布，那么t时间内收到回复的概率是</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">&gt;F(t) = (1 - e^(-Lt))    </span><br></pre></td></tr></table></figure>
+<p>其中参数L的最大似然估计是达到时间的平均值的倒数，记为 1/mean。从而我们得到</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">&gt;P_later(t) = 1 - (1 - e^(-t/mean)) = e^(-t/mean)</span><br></pre></td></tr></table></figure>
+<p>现在定义phi(t)如下:</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">&gt;phi(t) = -log10(P_later(t)) </span><br><span class="line">       = -log(e^(-t/mean)) / log(10)</span><br><span class="line">       = (t/mean) / log(10)</span><br><span class="line">       = 0.4342945 * t / mean</span><br></pre></td></tr></table></figure>
+<p>当phi值大于阈值，就认为发生故障。</p>
+</blockquote>
+<p><em><strong>reference</strong></em></p>
+<ol>
+<li><p><a target="_blank" rel="noopener" href="http://kaiyuan.me/2015/07/08/Gossip/">http://kaiyuan.me/2015/07/08/Gossip/</a></p>
+</li>
+<li><p><a target="_blank" rel="noopener" href="https://issues.apache.org/jira/browse/CASSANDRA-2597">https://issues.apache.org/jira/browse/CASSANDRA-2597</a></p>
+</li>
+</ol>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/10/16/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%948-Gossip%E5%8D%8F%E8%AE%AE%E5%92%8C%E6%95%85%E9%9A%9C%E6%A3%80%E6%B5%8B/" data-id="ckzldzrag0007tofwchp68v0y" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+  
+    <article id="post-Cassandra源码阅读随笔7-COMPACTION" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/10/10/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%947-COMPACTION/" class="article-date">
+  <time datetime="2019-10-10T12:17:08.000Z" itemprop="datePublished">2019-10-10</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="article-title" href="/2019/10/10/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%947-COMPACTION/">Cassandra源码阅读随笔7. COMPACTION</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <p>回顾前面的SELECT执行过程，我们可以知道随着sstable的数量增加，读取性能会不断下降，因此需要控制sstable的数量。和其他基于LSM的存储系统，Cassandra中也是通过合并（compaction）来合并不同版本的数据、移除tombstone，以此来减少sstable数量。</p>
+<p>合并操作是在后台触发的，可以手动触发，也可以自动触发，主要的入口是CompactionManager的submitBackground()方法，可以看到合并操作由一个线程池负责执行。该方法的注释中提到每当可能需要执行合并操作就可以调用该方法。通常在启动或把memetable刷入磁盘时会调用该方法。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br></pre></td><td class="code"><pre><span class="line">public List&lt;Future&lt;?&gt;&gt; submitBackground(final ColumnFamilyStore cfs) &#123;</span><br><span class="line">    if (cfs.isAutoCompactionDisabled()) &#123;</span><br><span class="line">        logger.debug(&quot;Autocompaction is disabled&quot;);</span><br><span class="line">        return Collections.emptyList();</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    int count = compactingCF.count(cfs);</span><br><span class="line">    if (count &gt; 0 &amp;&amp; executor.getActiveCount() &gt;= executor.getMaximumPoolSize()) &#123; </span><br><span class="line">        // 运行的任务太多，直接返回</span><br><span class="line">        return Collections.emptyList();</span><br><span class="line">    &#125;</span><br><span class="line"></span><br><span class="line">    List&lt;Future&lt;?&gt;&gt; futures = new ArrayList&lt;&gt;();</span><br><span class="line"></span><br><span class="line">    // we must schedule it at least once, otherwise compaction will stop for a CF until next flush</span><br><span class="line">    do &#123;</span><br><span class="line">        compactingCF.add(cfs);</span><br><span class="line">        futures.add(executor.submit(new BackgroundCompactionTask(cfs)));</span><br><span class="line">        // if we have room for more compactions, then fill up executor</span><br><span class="line">    &#125; while (executor.getActiveCount() + futures.size() &lt; executor.getMaximumPoolSize());</span><br><span class="line"></span><br><span class="line">    return futures;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>看下BackgroundCompactionTask的Run()方法，该方法中主要根据合并策略（AbstractCompactionStrategy的实现类）获取一个CompactionTask，如何该task不为空就执行。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><span class="line">public void run() &#123;</span><br><span class="line">    try &#123;</span><br><span class="line">        logger.debug(&quot;Checking &#123;&#125;.&#123;&#125;&quot;, cfs.keyspace.getName(), cfs.name);</span><br><span class="line">        if (!cfs.isValid()) &#123;</span><br><span class="line">            logger.debug(&quot;Aborting compaction for dropped CF&quot;);</span><br><span class="line">            return;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        AbstractCompactionStrategy strategy = cfs.getCompactionStrategy();</span><br><span class="line">        AbstractCompactionTask task = strategy.getNextBackgroundTask(getDefaultGcBefore(cfs));</span><br><span class="line">        if (task == null) &#123;</span><br><span class="line">            logger.debug(&quot;No tasks available&quot;);</span><br><span class="line">            return;</span><br><span class="line">        &#125;</span><br><span class="line">        task.execute(metrics);</span><br><span class="line">    &#125; finally &#123;</span><br><span class="line">        compactingCF.remove(cfs);</span><br><span class="line">    &#125;</span><br><span class="line">    submitBackground(cfs);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>在getNextBackgroundTask()方法中最主要的是找出需要执行合并的sstable。以SizeTieredCompactionStrategy为例，其实现流程如下：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br></pre></td><td class="code"><pre><span class="line">private List&lt;SSTableReader&gt; getNextBackgroundSSTables(final int gcBefore) &#123;</span><br><span class="line">    if (!isEnabled())</span><br><span class="line">        return Collections.emptyList();</span><br><span class="line"></span><br><span class="line">    // make local copies so they can&#x27;t be changed out from under us mid-method</span><br><span class="line">    int minThreshold = cfs.getMinimumCompactionThreshold();</span><br><span class="line">    int maxThreshold = cfs.getMaximumCompactionThreshold();</span><br><span class="line"></span><br><span class="line">    // 1.忽略isSuspect属性为trued的sstable</span><br><span class="line">    Iterable&lt;SSTableReader&gt; candidates = filterSuspectSSTables(cfs.getUncompactingSSTables());</span><br><span class="line">    // 2.过滤冷数据块</span><br><span class="line">    candidates = filterColdSSTables(Lists.newArrayList(candidates), options.coldReadsToOmit);</span><br><span class="line"></span><br><span class="line">    // 3.根据相似尺寸来分桶，小于minSSTableSize的所有sstable会分到同一个桶</span><br><span class="line">    List&lt;List&lt;SSTableReader&gt;&gt; buckets = getBuckets(createSSTableAndLengthPairs(candidates), options.bucketHigh,</span><br><span class="line">            options.bucketLow, options.minSSTableSize);</span><br><span class="line">    logger.debug(&quot;Compaction buckets are &#123;&#125;&quot;, buckets);</span><br><span class="line">    updateEstimatedCompactionsByTasks(buckets);</span><br><span class="line">    // 4.在分组里面取出“最感兴趣”的</span><br><span class="line">    List&lt;SSTableReader&gt; mostInteresting = mostInterestingBucket(buckets, minThreshold, maxThreshold);</span><br><span class="line">    if (!mostInteresting.isEmpty())</span><br><span class="line">        return mostInteresting;</span><br><span class="line"></span><br><span class="line">    // if there is no sstable to compact in standard way, try compacting single sstable whose droppable tombstone</span><br><span class="line">    // ratio is greater than threshold.</span><br><span class="line">    List&lt;SSTableReader&gt; sstablesWithTombstones = new ArrayList&lt;&gt;();</span><br><span class="line">    for (SSTableReader sstable : candidates) &#123;</span><br><span class="line">        // 5.查找需要清理tombstone的sstable</span><br><span class="line">        if (worthDroppingTombstones(sstable, gcBefore))</span><br><span class="line">            sstablesWithTombstones.add(sstable);</span><br><span class="line">    &#125;</span><br><span class="line">    if (sstablesWithTombstones.isEmpty())</span><br><span class="line">        return Collections.emptyList();</span><br><span class="line"></span><br><span class="line">    Collections.sort(sstablesWithTombstones, new SSTableReader.SizeComparator());</span><br><span class="line">    return Collections.singletonList(sstablesWithTombstones.get(0));</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>其中</p>
+<ul>
+<li>第2步过滤冷数据块中，数据的“热度（hotness）”定义为2小时内的访问次数除以块中的估计的key的数量，把sstable根据hotness排序后，过滤掉hotness最小且访问次数和小于(coldReadsToOmit * 所有块的读取总数)的若干个数据块。</li>
+<li>第4步中，首先在各个分组中找出hotness最大的若干个（不超过maxThreshold，如果小于minThreshold，则忽略）sstable，然后把各个组的这些sstable的hotness计算总和，找出hotness和最大的那个分组的若干个sstable返回。</li>
+<li>第5步中，查找需要清理tombstone的sstable。对于某个sstable，判断是否需要清理的判断过程如下：<ol>
+<li>如果自创建sstable的时间起到当前时间小于合并的时间间隔tombstoneCompactionInterval（默认为1天），则直接返回false。</li>
+<li>如果估算的tombstone所占的比例小于tombstoneThreshold（默认为0.2f），则直接返回false。</li>
+<li>查找是否存在和此sstable的key范围有重叠的其他sstable，如果不存在，返回true（因为这样可以安全地清除tombstone，否则的话可能会使得删除的记录“复活”）；否则进入下一步。</li>
+<li>有key重合，但是此sstable已经过期，也返回true。过期是指此sstable的最大修改时间也小于其他sstable的最小修改时间，也可以清除tombstone，因为即使某个tombstone对应的key在其他sstable中存在记录，但是由于时间更新，也会覆盖tombstone，所以tombstone可以安全清除；否则进入下一步。</li>
+<li>估算此sstable和其他sstable不重合的key范围的column数量所占比例，如果超过一定大小返回true，否则返回false。</li>
+</ol>
+</li>
+</ul>
+<p>下面来看合并的执行过程，主要逻辑在CompactionTask的runMayThrow()方法中</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br><span class="line">107</span><br><span class="line">108</span><br><span class="line">109</span><br><span class="line">110</span><br><span class="line">111</span><br><span class="line">112</span><br><span class="line">113</span><br><span class="line">114</span><br><span class="line">115</span><br><span class="line">116</span><br><span class="line">117</span><br><span class="line">118</span><br><span class="line">119</span><br><span class="line">120</span><br><span class="line">121</span><br><span class="line">122</span><br><span class="line">123</span><br><span class="line">124</span><br><span class="line">125</span><br><span class="line">126</span><br><span class="line">127</span><br><span class="line">128</span><br><span class="line">129</span><br><span class="line">130</span><br><span class="line">131</span><br><span class="line">132</span><br><span class="line">133</span><br><span class="line">134</span><br><span class="line">135</span><br><span class="line">136</span><br><span class="line">137</span><br><span class="line">138</span><br><span class="line">139</span><br><span class="line">140</span><br><span class="line">141</span><br><span class="line">142</span><br><span class="line">143</span><br><span class="line">144</span><br><span class="line">145</span><br><span class="line">146</span><br><span class="line">147</span><br><span class="line">148</span><br><span class="line">149</span><br><span class="line">150</span><br><span class="line">151</span><br><span class="line">152</span><br><span class="line">153</span><br><span class="line">154</span><br><span class="line">155</span><br><span class="line">156</span><br><span class="line">157</span><br><span class="line">158</span><br><span class="line">159</span><br></pre></td><td class="code"><pre><span class="line">protected void runMayThrow() throws Exception &#123;</span><br><span class="line">        // The collection of sstables passed may be empty (but not null); even if</span><br><span class="line">        // it is not empty, it may compact down to nothing if all rows are deleted.</span><br><span class="line">        assert sstables != null;</span><br><span class="line"></span><br><span class="line">        AbstractCompactionStrategy strategy = cfs.getCompactionStrategy();</span><br><span class="line"></span><br><span class="line">        if (DatabaseDescriptor.isSnapshotBeforeCompaction()) // 合并前之前快照</span><br><span class="line">            cfs.snapshotWithoutFlush(System.currentTimeMillis() + &quot;-compact-&quot; + cfs.name);</span><br><span class="line"></span><br><span class="line">        // 在合并前需要估算下磁盘空间是否足够</span><br><span class="line">        long earlySSTableEstimate = Math.max(1,</span><br><span class="line">                cfs.getExpectedCompactedFileSize(toCompact, compactionType) / strategy.getMaxSSTableBytes());</span><br><span class="line">        checkAvailableDiskSpace(earlySSTableEstimate);</span><br><span class="line"></span><br><span class="line">        // sanity check: all sstables must belong to the same cfs</span><br><span class="line">        for (SSTableReader sstable : toCompact)</span><br><span class="line">            assert sstable.descriptor.cfname.equals(cfs.name);</span><br><span class="line">        </span><br><span class="line">        // 写入compact log</span><br><span class="line">        UUID taskId = SystemKeyspace.startCompaction(cfs, toCompact);</span><br><span class="line"></span><br><span class="line">        CompactionController controller = getCompactionController(toCompact);</span><br><span class="line">        // TODO 为什么排除expired sstable</span><br><span class="line">        Set&lt;SSTableReader&gt; actuallyCompact = Sets.difference(toCompact, controller.getFullyExpiredSSTables());</span><br><span class="line"></span><br><span class="line">        // new sstables from flush can be added during a compaction, but only the compaction can remove them,</span><br><span class="line">        // so in our single-threaded compaction world this is a valid way of determining if we&#x27;re compacting</span><br><span class="line">        // all the sstables (that existed when we started)</span><br><span class="line">        logger.info(&quot;Compacting &#123;&#125;&quot;, toCompact);</span><br><span class="line"></span><br><span class="line">        long start = System.nanoTime();</span><br><span class="line">        long totalKeysWritten = 0;</span><br><span class="line"></span><br><span class="line">        long estimatedTotalKeys = Math.max(cfs.metadata.getIndexInterval(),</span><br><span class="line">                SSTableReader.getApproximateKeyCount(actuallyCompact, cfs.metadata)); // 估算需要合并的sstable中key的总数</span><br><span class="line">        long estimatedSSTables = Math.max(1, getExpectedWriteSize() / strategy.getMaxSSTableBytes());</span><br><span class="line">        long keysPerSSTable = (long) Math.ceil((double) estimatedTotalKeys / estimatedSSTables);</span><br><span class="line">       </span><br><span class="line">        // AbstractCompactionIterable 也是一个多路合并的迭代器，和读取过程是类似的</span><br><span class="line">        AbstractCompactionIterable ci = DatabaseDescriptor.isMultithreadedCompaction()</span><br><span class="line">                ? new ParallelCompactionIterable(compactionType, strategy.getScanners(actuallyCompact), controller)</span><br><span class="line">                : new CompactionIterable(compactionType, strategy.getScanners(actuallyCompact), controller);</span><br><span class="line">        CloseableIterator&lt;AbstractCompactedRow&gt; iter = ci.iterator();</span><br><span class="line">        Map&lt;DecoratedKey, RowIndexEntry&gt; cachedKeys = new HashMap&lt;&gt;();</span><br><span class="line"></span><br><span class="line">        // we can&#x27;t preheat until the tracker has been set. This doesn&#x27;t happen until we tell the cfs to</span><br><span class="line">        // replace the old entries.  Track entries to preheat here until then.</span><br><span class="line">        // 缓存需要预热的索引项</span><br><span class="line">        Map&lt;Descriptor, Map&lt;DecoratedKey, RowIndexEntry&gt;&gt; cachedKeyMap = new HashMap&lt;&gt;();</span><br><span class="line"></span><br><span class="line">        Collection&lt;SSTableReader&gt; sstables = new ArrayList&lt;&gt;();</span><br><span class="line">        Collection&lt;SSTableWriter&gt; writers = new ArrayList&lt;&gt;();</span><br><span class="line"></span><br><span class="line">        if (collector != null)</span><br><span class="line">            collector.beginCompaction(ci);</span><br><span class="line">        try &#123;</span><br><span class="line">            if (!iter.hasNext()) &#123;</span><br><span class="line">                // don&#x27;t mark compacted in the finally block, since if there _is_ nondeleted data,</span><br><span class="line">                // we need to sync it (via closeAndOpen) first, so there is no period during which</span><br><span class="line">                // a crash could cause data loss. TODO ???</span><br><span class="line">                cfs.markObsolete(toCompact, compactionType);</span><br><span class="line">                return;</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            long writeSize = getExpectedWriteSize() / estimatedSSTables; // 预估要写入的数据大小</span><br><span class="line">            Directories.DataDirectory dataDirectory = getWriteDirectory(writeSize); // 获取写入目录</span><br><span class="line">            SSTableWriter writer = createCompactionWriter(cfs.directories.getLocationForDisk(dataDirectory), keysPerSSTable);</span><br><span class="line">            writers.add(writer);</span><br><span class="line">            while (iter.hasNext()) &#123;</span><br><span class="line">                if (ci.isStopRequested())</span><br><span class="line">                    throw new CompactionInterruptedException(ci.getCompactionInfo());</span><br><span class="line"></span><br><span class="line">                AbstractCompactedRow row = iter.next();</span><br><span class="line">                RowIndexEntry indexEntry = writer.append(row);</span><br><span class="line">                if (indexEntry == null) &#123;</span><br><span class="line">                    // 只有合并之后所有column全为tombstone才返回null，也就是该key其实没数据了</span><br><span class="line">                    controller.invalidateCachedRow(row.key);</span><br><span class="line">                    row.close();</span><br><span class="line">                    continue;</span><br><span class="line">                &#125;</span><br><span class="line"></span><br><span class="line">                totalKeysWritten++;</span><br><span class="line"></span><br><span class="line">                if (DatabaseDescriptor.getPreheatKeyCache()) &#123; // 需要预热key cache</span><br><span class="line">                    for (SSTableReader sstable : actuallyCompact) &#123;</span><br><span class="line">                        if (sstable.getCachedPosition(row.key, false) != null) &#123;</span><br><span class="line">                            cachedKeys.put(row.key, indexEntry);</span><br><span class="line">                            break;</span><br><span class="line">                        &#125;</span><br><span class="line">                    &#125;</span><br><span class="line">                &#125;</span><br><span class="line"></span><br><span class="line">                if (newSSTableSegmentThresholdReached(writer)) &#123;</span><br><span class="line">                    // tmp = false because later we want to query it with descriptor from SSTableReader</span><br><span class="line">                    cachedKeyMap.put(writer.descriptor.asTemporary(false), cachedKeys);</span><br><span class="line">                    writeSize = getExpectedWriteSize() / estimatedSSTables;</span><br><span class="line">                    dataDirectory = getWriteDirectory(writeSize);</span><br><span class="line">                    writer = createCompactionWriter(cfs.directories.getLocationForDisk(dataDirectory), keysPerSSTable);</span><br><span class="line">                    writers.add(writer);</span><br><span class="line">                    cachedKeys = new HashMap&lt;&gt;();</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            if (writer.getFilePointer() &gt; 0) &#123;</span><br><span class="line">                cachedKeyMap.put(writer.descriptor.asTemporary(false), cachedKeys);</span><br><span class="line">            &#125; else &#123;</span><br><span class="line">                writer.abort();</span><br><span class="line">                writers.remove(writer);</span><br><span class="line">            &#125;</span><br><span class="line"></span><br><span class="line">            long maxAge = getMaxDataAge(toCompact);</span><br><span class="line">            for (SSTableWriter completedWriter : writers) // 关闭writer同时打开reader</span><br><span class="line">                sstables.add(completedWriter.closeAndOpenReader(maxAge));</span><br><span class="line">        &#125; catch (Throwable t) &#123;</span><br><span class="line">            for (SSTableWriter writer : writers)</span><br><span class="line">                writer.abort();</span><br><span class="line">            // also remove already completed SSTables</span><br><span class="line">            for (SSTableReader sstable : sstables) &#123;</span><br><span class="line">                sstable.markObsolete();</span><br><span class="line">                sstable.releaseReference();</span><br><span class="line">            &#125;</span><br><span class="line">            throw Throwables.propagate(t);</span><br><span class="line">        &#125; finally &#123;</span><br><span class="line">            controller.close();</span><br><span class="line"></span><br><span class="line">            // point of no return -- the new sstables are live on disk; next we&#x27;ll start deleting the old ones</span><br><span class="line">            // (in replaceCompactedSSTables)</span><br><span class="line">            if (taskId != null)</span><br><span class="line">                SystemKeyspace.finishCompaction(taskId);</span><br><span class="line"></span><br><span class="line">            if (collector != null)</span><br><span class="line">                collector.finishCompaction(ci);</span><br><span class="line"></span><br><span class="line">            try &#123;</span><br><span class="line">                // We don&#x27;t expect this to throw, but just in case, we do it after the cleanup above, to make sure</span><br><span class="line">                // we don&#x27;t end up with compaction information hanging around indefinitely in limbo.</span><br><span class="line">                iter.close();</span><br><span class="line">            &#125; catch (IOException e) &#123;</span><br><span class="line">                throw new RuntimeException(e);</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        // 用新生的sstable替换被合并的sstable</span><br><span class="line">        replaceCompactedSSTables(toCompact, sstables);</span><br><span class="line">        // TODO: this doesn&#x27;t belong here, it should be part of the reader to load when the tracker is wired up</span><br><span class="line">        for (SSTableReader sstable : sstables) &#123;</span><br><span class="line">            if (sstable.acquireReference()) &#123; /</span><br><span class="line">                try &#123;</span><br><span class="line">                    sstable.preheat(cachedKeyMap.get(sstable.descriptor)); // 预热索引项</span><br><span class="line">                &#125; finally &#123;</span><br><span class="line">                    sstable.releaseReference();</span><br><span class="line">                &#125;</span><br><span class="line">            &#125;</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        // log a bunch of statistics about the result and save to system table compaction_history</span><br><span class="line">        ......</span><br><span class="line">    &#125;</span><br></pre></td></tr></table></figure>
+
+<p>在合并的过程中，同一个key对应的多个row的合并由getCompactedRow()方法处理：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line">public AbstractCompactedRow getCompactedRow(List&lt;SSTableIdentityIterator&gt; rows) &#123;</span><br><span class="line">    long rowSize = 0;</span><br><span class="line">    for (SSTableIdentityIterator row : rows)</span><br><span class="line">        rowSize += row.dataSize;</span><br><span class="line"></span><br><span class="line">    if (rowSize &gt; DatabaseDescriptor.getInMemoryCompactionLimit()) &#123;</span><br><span class="line">        String keyString = cfs.metadata.getKeyValidator().getString(rows.get(0).getKey().key);</span><br><span class="line">        logger.info(String.format(&quot;Compacting large row %s/%s:%s (%d bytes) incrementally&quot;,</span><br><span class="line">                cfs.keyspace.getName(), cfs.name, keyString, rowSize));</span><br><span class="line">        return new LazilyCompactedRow(this, rows);</span><br><span class="line">    &#125;</span><br><span class="line">    return new PrecompactedRow(this, rows);</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>可以看到当要合并的数据小于in_memory_compaction_limit_in_mb(64)MB时，会创建PrecompactedRow对象，调用的构造方法如下，可以发现在构造方法中就进行了数据的读取和合并，之后还会清除被删除的列，需要注意的是removeDeleted方法中仍然需要判断tombstone标记的列是否应该删除，判断的方法和之前的类似，从intervalTree中查找包含该key的sstable，如果这些sstable的minTimestamp大于合并后的maxTimestamp则可以清除tombstone。否则，如果这些sstable中不包含该key，那么也是可以清除的。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">public PrecompactedRow(CompactionController controller, List&lt;SSTableIdentityIterator&gt; rows) &#123;</span><br><span class="line">    this(rows.get(0).getKey(), removeDeleted(rows.get(0).getKey(), controller, merge(rows, controller)));</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>如果要合并的数据太多则会使用LazilyCompactedRow，在迭代的时候才会进行合并。</p>
+<hr>
+<p><strong>IntervalTree</strong></p>
+<p>在查找key范围有重叠的sstable时，cassandra中使用了一个称为IntervalTree的数据结构。IntervalTree的节点用IntervalNode表示，主要属性如下</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">private class IntervalNode &#123;</span><br><span class="line">    final C center; // 所有区间的中点</span><br><span class="line">    final C low;    // 所有区间的最小值</span><br><span class="line">    final C high;   // 所有区间的最大值</span><br><span class="line"></span><br><span class="line">    final List&lt;I&gt; intersectsLeft;  // 包含center的区间，按照区间的左值升序</span><br><span class="line">    final List&lt;I&gt; intersectsRight; // 包含center的区间，按照区间的右值降序</span><br><span class="line"></span><br><span class="line">    final IntervalNode left;  // 左子树</span><br><span class="line">    final IntervalNode right; // 右子树</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>建构IntervalTree的方法，参数是所有的区间，返回根节点，根节点涵盖了所有的区间范围。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br></pre></td><td class="code"><pre><span class="line">public IntervalNode(Collection&lt;I&gt; toBisect) &#123;</span><br><span class="line">    assert !toBisect.isEmpty();</span><br><span class="line">    logger.trace(&quot;Creating IntervalNode from &#123;&#125;&quot;, toBisect);</span><br><span class="line"></span><br><span class="line">    // Building IntervalTree with one interval will be a reasonably</span><br><span class="line">    // common case for range tombstones, so it&#x27;s worth optimizing</span><br><span class="line">    if (toBisect.size() == 1) &#123;</span><br><span class="line">        I interval = toBisect.iterator().next();</span><br><span class="line">        low = interval.min;</span><br><span class="line">        center = interval.max;</span><br><span class="line">        high = interval.max;</span><br><span class="line">        List&lt;I&gt; l = Collections.singletonList(interval);</span><br><span class="line">        intersectsLeft = l;</span><br><span class="line">        intersectsRight = l;</span><br><span class="line">        left = null;</span><br><span class="line">        right = null;</span><br><span class="line">    &#125; else &#123;</span><br><span class="line">        // 找出最大，最小和中间值</span><br><span class="line">        List&lt;C&gt; allEndpoints = new ArrayList&lt;&gt;(toBisect.size() * 2);</span><br><span class="line">        for (I interval : toBisect) &#123;</span><br><span class="line">            assert (comparator == null ? ((Comparable) interval.min).compareTo(interval.max)</span><br><span class="line">                    : comparator.compare(interval.min, interval.max)) &lt;= 0 : &quot;Interval min &gt; max&quot;;</span><br><span class="line">            allEndpoints.add(interval.min);</span><br><span class="line">            allEndpoints.add(interval.max);</span><br><span class="line">        &#125;</span><br><span class="line">        // 排序</span><br><span class="line">        if (comparator != null)</span><br><span class="line">            Collections.sort(allEndpoints, comparator);</span><br><span class="line">        else</span><br><span class="line">            Collections.sort((List&lt;Comparable&gt;) allEndpoints);</span><br><span class="line"></span><br><span class="line">        low = allEndpoints.get(0); //最小值</span><br><span class="line">        center = allEndpoints.get(toBisect.size()); // 中点</span><br><span class="line">        high = allEndpoints.get(allEndpoints.size() - 1); // 最大值</span><br><span class="line"></span><br><span class="line">        // 根据是否包含center，分隔成区间不相交的三部分</span><br><span class="line">        List&lt;I&gt; intersects = new ArrayList&lt;&gt;();</span><br><span class="line">        List&lt;I&gt; leftSegment = new ArrayList&lt;&gt;();</span><br><span class="line">        List&lt;I&gt; rightSegment = new ArrayList&lt;&gt;();</span><br><span class="line">        </span><br><span class="line">        for (I candidate : toBisect) &#123;</span><br><span class="line">            if (comparePoints(candidate.max, center) &lt; 0) // 不包含center，且最大值小于center，归属于左子树</span><br><span class="line">                leftSegment.add(candidate);</span><br><span class="line">            else if (comparePoints(candidate.min, center) &gt; 0) // 不包含center，且最小值大于center，归属于右子树</span><br><span class="line">                rightSegment.add(candidate);</span><br><span class="line">            else</span><br><span class="line">                intersects.add(candidate);</span><br><span class="line">        &#125;</span><br><span class="line"></span><br><span class="line">        intersectsLeft = minOrdering.sortedCopy(intersects);</span><br><span class="line">        intersectsRight = maxOrdering.reverse().sortedCopy(intersects);</span><br><span class="line">        left = leftSegment.isEmpty() ? null : new IntervalNode(leftSegment); // 构建左子树</span><br><span class="line">        right = rightSegment.isEmpty() ? null : new IntervalNode(rightSegment); // 构建右子树</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>从IntervalTree中查找和指定区间相交的所有区间：</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br></pre></td><td class="code"><pre><span class="line">void searchInternal(Interval&lt;C, D&gt; searchInterval, List&lt;D&gt; results) &#123;</span><br><span class="line">    // 区间外</span><br><span class="line">    if (comparePoints(searchInterval.max, low) &lt; 0 || comparePoints(searchInterval.min, high) &gt; 0)</span><br><span class="line">        return;</span><br><span class="line"></span><br><span class="line">    if (contains(searchInterval, center)) &#123; // 包含center节点</span><br><span class="line">        // Adds every interval contained in this node to the result set then search left and right for further</span><br><span class="line">        // overlapping intervals</span><br><span class="line">        for (Interval&lt;C, D&gt; interval : intersectsLeft)</span><br><span class="line">            results.add(interval.data);</span><br><span class="line"></span><br><span class="line">        if (left != null)</span><br><span class="line">            left.searchInternal(searchInterval, results);</span><br><span class="line">        if (right != null)</span><br><span class="line">            right.searchInternal(searchInterval, results);</span><br><span class="line">    &#125; else if (comparePoints(center, searchInterval.min) &lt; 0) &#123; // 可能和右子树或intersectsRight的元素相交</span><br><span class="line">        // Adds intervals i in intersects right as long as i.max &gt;= searchInterval.min</span><br><span class="line">        // then search right</span><br><span class="line">        for (Interval&lt;C, D&gt; interval : intersectsRight) &#123;</span><br><span class="line">            if (comparePoints(interval.max, searchInterval.min) &gt;= 0)</span><br><span class="line">                results.add(interval.data);</span><br><span class="line">            else</span><br><span class="line">                break;</span><br><span class="line">        &#125;</span><br><span class="line">        if (right != null)</span><br><span class="line">            right.searchInternal(searchInterval, results);</span><br><span class="line">    &#125; else &#123;</span><br><span class="line">        assert comparePoints(center, searchInterval.max) &gt; 0; // 可能和左子树或intersectsLeft的元素相交</span><br><span class="line">        // Adds intervals i in intersects left as long as i.min &gt;= searchInterval.max</span><br><span class="line">        // then search left</span><br><span class="line">        for (Interval&lt;C, D&gt; interval : intersectsLeft) &#123;</span><br><span class="line">            if (comparePoints(interval.min, searchInterval.max) &lt;= 0)</span><br><span class="line">                results.add(interval.data);</span><br><span class="line">            else</span><br><span class="line">                break;</span><br><span class="line">        &#125;</span><br><span class="line">        if (left != null)</span><br><span class="line">            left.searchInternal(searchInterval, results);</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>从实现上看，该IntervalTree不支持增删节点。</p>
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/10/10/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%947-COMPACTION/" data-id="ckzldzrav000ztofw99ihednd" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+  
+    <article id="post-Cassandra源码阅读随笔6-UPDATE和DELETE操作" class="article article-type-post" itemscope itemprop="blogPost">
+  <div class="article-meta">
+    <a href="/2019/09/28/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%946-UPDATE%E5%92%8CDELETE%E6%93%8D%E4%BD%9C/" class="article-date">
+  <time datetime="2019-09-28T07:16:07.000Z" itemprop="datePublished">2019-09-28</time>
+</a>
+    
+  </div>
+  <div class="article-inner">
+    
+    
+      <header class="article-header">
+        
+  
+    <h1 itemprop="name">
+      <a class="article-title" href="/2019/09/28/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%946-UPDATE%E5%92%8CDELETE%E6%93%8D%E4%BD%9C/">Cassandra源码阅读随笔6. UPDATE和DELETE操作</a>
+    </h1>
+  
+
+      </header>
+    
+    <div class="article-entry" itemprop="articleBody">
+      
+        <h2 id="UPDATE"><a href="#UPDATE" class="headerlink" title="UPDATE"></a>UPDATE</h2><p>cql中允许执行以下几种更新操作：</p>
+<ul>
+<li>设置一个值(SetValue): c = v </li>
+<li>设置集合的某个元素(SetElement): c[x] = v</li>
+<li>对变量的增减(Addition/Substraction): c = c +/- v (where v can be a collection literal)</li>
+<li>prepend(Prepend)操作: c = v + c</li>
+</ul>
+<p>假设现在执行如下更新语句，显然这是一个SetValue操作。UPDATE语句的解析主要是操作内容和where条件的解析，解析后生成一个UpdateStatement实例，这个INSERT操作是一样，后面的执行过程也是一样的，即把UPDATE操作转换为了INSERT操作。以下面的语句为例，相当于插入只有一个user_name列的cf，而在读取时该列返回的就是这个最新的cf中的数据。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">update users set user_name = &#x27;Green&#x27; where id = 1 and age = 5;</span><br></pre></td></tr></table></figure>
+
+<h2 id="DELETE"><a href="#DELETE" class="headerlink" title="DELETE"></a>DELETE</h2><p>delte语句被解析为DeleteStatement，和UPDATE操作类似，DETLETE也会被转化为INSERT操作，插入的是包含只包含删除信息的cf，比如下面的语句，会生成一个RangeTombstone，RangeTombstone根据列名的范围来删除列。前文提到，partition key相同的所有记录的列把clustering key + column name组合后再排序。下面的delete语句指定了cluster key = 12，那么就会创建一个范围包含所有以12开头的列。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">delete from users where id = 10 and age = 12;</span><br></pre></td></tr></table></figure>
+<p>在cassandra中还可以只删除某一列，如下语句，此时也是生成一个cf，只是该cf只包含删除列，且列的值是删除相关的信息。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">delete user_name from users where id = 10 and age = 18;</span><br></pre></td></tr></table></figure>
+
+
+
+
+
+      
+    </div>
+    <footer class="article-footer">
+      <a data-url="http://example.com/2019/09/28/Cassandra%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%946-UPDATE%E5%92%8CDELETE%E6%93%8D%E4%BD%9C/" data-id="ckzldzraf0006tofw3l7dcv6q" class="article-share-link">Share</a>
+      
+      
+  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li></ul>
+
+    </footer>
+  </div>
+  
+</article>
+
+
+  
+
+
+  <nav id="page-nav">
+    
+    <span class="page-number current">1</span><a class="page-number" href="/page/2/">2</a><a class="extend next" rel="next" href="/page/2/">Next &amp;raquo;</a>
+  </nav>
+
+</section>
+        
+          <aside id="sidebar">
+  
+    
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tags</h3>
+    <div class="widget">
+      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/BookKeeper/" rel="tag">BookKeeper</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Cassandra/" rel="tag">Cassandra</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/HBase/" rel="tag">HBase</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Parser-combinator/" rel="tag">Parser combinator</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/Pulasr/" rel="tag">Pulasr</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Tag Cloud</h3>
+    <div class="widget tagcloud">
+      <a href="/tags/BookKeeper/" style="font-size: 10px;">BookKeeper</a> <a href="/tags/Cassandra/" style="font-size: 20px;">Cassandra</a> <a href="/tags/HBase/" style="font-size: 15px;">HBase</a> <a href="/tags/Parser-combinator/" style="font-size: 10px;">Parser combinator</a> <a href="/tags/Pulasr/" style="font-size: 10px;">Pulasr</a>
+    </div>
+  </div>
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Archives</h3>
+    <div class="widget">
+      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2020/03/">March 2020</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/12/">December 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/11/">November 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/10/">October 2019</a></li><li class="archive-list-item"><a class="archive-list-link" href="/archives/2019/09/">September 2019</a></li></ul>
+    </div>
+  </div>
+
+
+  
+    
+  <div class="widget-wrap">
+    <h3 class="widget-title">Recent Posts</h3>
+    <div class="widget">
+      <ul>
+        
+          <li>
+            <a href="/2020/03/07/Parser-combinator%E5%88%9D%E6%8E%A21-%E7%AE%80%E6%98%93JSON%E8%A7%A3%E6%9E%90%E5%99%A8/">Parser combinator初探1-简易JSON解析器</a>
+          </li>
+        
+          <li>
+            <a href="/2019/12/28/Cassandra%E7%AC%94%E8%AE%B01-Compaction%E7%AD%96%E7%95%A5/">Cassandra笔记1-Compaction策略</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/27/HBase%E6%BA%90%E7%A0%81%E9%98%85%E8%AF%BB%E9%9A%8F%E7%AC%942-MemStore/">HBase源码阅读随笔2-MemStore</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/17/%E8%AF%91-Pulsar%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]-Pulsar简要介绍</a>
+          </li>
+        
+          <li>
+            <a href="/2019/11/10/%E8%AF%91-BookKeeper%E7%AE%80%E8%A6%81%E4%BB%8B%E7%BB%8D/">[译]BookKeeper简要介绍</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+
+  
+</aside>
+        
+      </div>
+      <footer id="footer">
+  
+  <div class="outer">
+    <div id="footer-info" class="inner">
+      &copy; 2022 Bao Qingping<br>
+      Powered by <a href="http://hexo.io/" target="_blank">Hexo</a>
+    </div>
+  </div>
+</footer>
+    </div>
+    <nav id="mobile-nav">
+  
+    <a href="/" class="mobile-nav-link">Home</a>
+  
+    <a href="/archives" class="mobile-nav-link">Archives</a>
+  
+</nav>
+    
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/2.0.3/jquery.min.js"></script>
+
+
+  
+<link rel="stylesheet" href="/fancybox/jquery.fancybox.css">
+
+  
+<script src="/fancybox/jquery.fancybox.pack.js"></script>
+
+
+
+
+<script src="/js/script.js"></script>
+
+
+
+
+  </div>
+</body>
+</html>
