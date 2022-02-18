@@ -38,11 +38,12 @@ gtag('config', 'xx-xxxxxxx-xx');</script><link rel="stylesheet" href="/css/tocbo
 <p>假设现在执行如下更新语句，显然这是一个SetValue操作。UPDATE语句的解析主要是操作内容和where条件的解析，解析后生成一个UpdateStatement实例，这个INSERT操作是一样，后面的执行过程也是一样的，即把UPDATE操作转换为了INSERT操作。以下面的语句为例，相当于插入只有一个user_name列的cf，而在读取时该列返回的就是这个最新的cf中的数据。</p>
 <figure class="highlight bash"><table><tr><td class="code"><pre><code class="hljs bash">update <span class="hljs-built_in">users</span> <span class="hljs-built_in">set</span> user_name = <span class="hljs-string">&#x27;Green&#x27;</span> <span class="hljs-built_in">where</span> <span class="hljs-built_in">id</span> = 1 and age = 5;<br></code></pre></td></tr></table></figure>
 
+
+
 <h2 id="DELETE"><a href="#DELETE" class="headerlink" title="DELETE"></a>DELETE</h2><p>delte语句被解析为DeleteStatement，和UPDATE操作类似，DETLETE也会被转化为INSERT操作，插入的是包含只包含删除信息的cf，比如下面的语句，会生成一个RangeTombstone，RangeTombstone根据列名的范围来删除列。前文提到，partition key相同的所有记录的列把clustering key + column name组合后再排序。下面的delete语句指定了cluster key = 12，那么就会创建一个范围包含所有以12开头的列。</p>
 <figure class="highlight abnf"><table><tr><td class="code"><pre><code class="hljs abnf">delete from users where id <span class="hljs-operator">=</span> <span class="hljs-number">10</span> and age <span class="hljs-operator">=</span> <span class="hljs-number">12</span><span class="hljs-comment">;</span><br></code></pre></td></tr></table></figure>
 <p>在cassandra中还可以只删除某一列，如下语句，此时也是生成一个cf，只是该cf只包含删除列，且列的值是删除相关的信息。</p>
 <figure class="highlight abnf"><table><tr><td class="code"><pre><code class="hljs abnf">delete user_name from users where id <span class="hljs-operator">=</span> <span class="hljs-number">10</span> and age <span class="hljs-operator">=</span> <span class="hljs-number">18</span><span class="hljs-comment">;</span><br></code></pre></td></tr></table></figure>
-
 
 
 

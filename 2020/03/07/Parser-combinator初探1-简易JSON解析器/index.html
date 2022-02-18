@@ -33,7 +33,7 @@ gtag('config', 'xx-xxxxxxx-xx');</script><link rel="stylesheet" href="/css/tocbo
 <p>A <strong>parser combinator</strong> is a higher-order function that accepts several parsers as input and returns a new parser as its output.</p>
 </blockquote>
 <p>解析器组合子适用于处理非左递归的文法，本质是递归下降的一种实现方式。参考 <a target="_blank" rel="noopener" href="https://medium.com/@armin.heller/using-parser-combinators-in-go-e63b3ad69c94">Using Parser Combinators in Go</a> 这篇文章中的go的实现方式，我们用java重新实现一遍，并在此基础上构建一个简单的JSON解析器。</p>
-<h2 id="Parser-combinator代码实现123"><a href="#Parser-combinator代码实现123" class="headerlink" title="Parser combinator代码实现123"></a>Parser combinator代码实现123</h2><p>首先定义Parser的输入如下：</p>
+<h2 id="Parser-combinator代码实现"><a href="#Parser-combinator代码实现" class="headerlink" title="Parser combinator代码实现"></a>Parser combinator代码实现</h2><p>首先定义Parser的输入如下：</p>
 <figure class="highlight java"><table><tr><td class="code"><pre><code class="hljs java"><span class="hljs-keyword">interface</span> <span class="hljs-title class_">Input</span> &#123;<br>       <span class="hljs-comment">// 获取当前的字符</span><br>       <span class="hljs-type">char</span> <span class="hljs-title function_">currentCodePoint</span><span class="hljs-params">()</span>;<br>       <span class="hljs-comment">// 剩余的输入</span><br>       Input <span class="hljs-title function_">remainingInput</span><span class="hljs-params">()</span>;<br>       <span class="hljs-comment">// 剩余输入大小</span><br>       <span class="hljs-type">int</span> <span class="hljs-title function_">remainSize</span><span class="hljs-params">()</span>;<br>   &#125;<br></code></pre></td></tr></table></figure>
 
 <p>Parser函数对输入作用后的输出结果表示如下，其中remainingInput表示此次作用后剩下未处理的输入，用于后续的继续处理。</p>

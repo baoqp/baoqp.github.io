@@ -89,7 +89,8 @@ gtag('config', 'xx-xxxxxxx-xx');</script><link rel="stylesheet" href="/css/tocbo
 <ol start="3">
 <li>Kafka中拥有leader分区的节点从ZooKeeper中隔离。这会导致Kafka出现短期裂脑。当acks = 1时，leader将继续接受写入，直到发现无法与ZooKeeper对话，此时它将停止接受写入。同时，某个follower被提升为leader。那么当旧的leader 成为follower时，脑裂期间写入旧leader的所有消息都会丢失。当acks = all时，如果所有的follower都落后太多，从ISR中移除，那么ISR只由leader组成。 然后，leader与ZooKeeper隔离，即使已经有follower被提升为leader，旧leader仍然会在短时间内继续接受acks = all消息。那么当旧的leader成为follower时，脑裂期间写入旧leader的所有消息都会丢失。在Pulsar中存储层不会出现脑裂，任何时候只有一个broker可以对topic进行写入。新的broker会使用fencing机制隔离之前的ledger，防止旧的leader故障恢复后再次写入。</li>
 </ol>
-<h2 id="Reference"><a href="#Reference" class="headerlink" title="Reference"></a>Reference</h2><ol>
+<p><strong>Reference</strong></p>
+<ol>
 <li><p><a target="_blank" rel="noopener" href="https://streaml.io/blog/messaging-storage-or-both">Messaging, storage, or both?</a></p>
 </li>
 <li><p><a target="_blank" rel="noopener" href="https://streaml.io/blog/pulsar-segment-based-architecture">Comparing Pulsar and Kafka: how a segment-based architecture delivers better performance, scalability, and resilience</a></p>
